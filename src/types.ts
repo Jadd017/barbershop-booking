@@ -22,13 +22,24 @@ export interface Settings {
   services: Service[];
 }
 
-export interface Booking {
-  id: string;
+/** What the customer page sends when booking. */
+export interface BookingRequest {
+  name: string;
+  /** Normalized, e.g. "+96170123456". */
+  phone: string;
+  service: Service;
   date: DateKey;
-  start: TimeString;
-  /** Stored on the booking so later service changes don't affect existing bookings. */
+  startTime: TimeString;
+}
+
+/** Shown on the confirmation screen. */
+export interface ConfirmedBooking {
+  id: string;
+  bookingCode: string;
+  serviceName: string;
   durationMinutes: number;
-  serviceId: string;
+  date: DateKey;
+  startTime: TimeString;
 }
 
 export interface StartTimeOption {
