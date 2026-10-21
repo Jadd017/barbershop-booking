@@ -7,6 +7,11 @@
  *   Using the code as the ID lets a customer fetch their own booking without listing others.
  * - slots/{date}_{HHMM}: one doc per taken 15-min slot, holding only bookingId and date,
  *   so the customer page can see which times are taken without reading anyone's details.
+ * - phoneLimits/{phone}_{1|2}: the two "seats" a phone number can hold, each pointing at a booking.
+ *   Customers can't read them; firestore.rules only lets a booking take a free seat, which
+ *   caps each phone at MAX_ACTIVE_BOOKINGS_PER_PHONE upcoming bookings.
+ *
+ * firestore.rules re-checks everything written here, so keep the two in step.
  */
 import {
   collection,
@@ -17,11 +22,14 @@ import {
   runTransaction,
   serverTimestamp,
   updateDoc,
+  Timestamp,
   where,
   type DocumentData,
 } from 'firebase/firestore';
+import { ADMIN_UID, MAX_ACTIVE_BOOKINGS_PER_PHONE, SHOP_TIME_ZONE } from '../config';
 import { generateBookingCode } from '../lib/bookingCode';
 import { isPast, slotsNeeded } from '../lib/slots';
+import { zonedInstant } from '../lib/time';
 import type {
   AdminBooking,
   BookingRequest,
@@ -33,7 +41,7 @@ import type {
   TimeString,
 } from '../types';
 import { fakeSettings } from './fakeData';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 
 /** Simulated network latency so loading states are exercised. */
 const FAKE_DELAY_MS = 200;
@@ -84,6 +92,14 @@ export class AlreadyCancelledError extends Error {
   }
 }
 
+/** Thrown when the phone already has the maximum number of upcoming bookings. */
+export class TooManyBookingsError extends Error {
+  constructor() {
+    super('Too many upcoming bookings for this phone');
+    this.name = 'TooManyBookingsError';
+  }
+}
+
 /** Thrown when every generated code collided with an existing booking (astronomically unlikely). */
 class NoFreeCodeError extends Error {
   constructor() {
@@ -102,6 +118,8 @@ interface BookingDoc {
   serviceName: string;
   date: DateKey;
   startTime: TimeString;
+  /** The real instant of date + startTime in the shop's time zone. */
+  startAt: Timestamp;
   durationMinutes: number;
   bookingCode: string;
   status: BookingStatus;
@@ -140,16 +158,58 @@ export function subscribeTakenSlots(
  * Books atomically: checks every slot the service needs and, only if all are
  * free, creates the booking and its slot docs together. If any slot is taken,
  * nothing is written and SlotTakenError is thrown.
+ *
+ * Customer bookings also take one of the phone's seats (see the top of this file).
+ * Seats can't be read, so it tries each in turn: the rules refuse a seat in use.
  */
 export async function createBooking(request: BookingRequest): Promise<ConfirmedBooking> {
-  const { name, phone, service, date, startTime } = request;
+  const { date, startTime } = request;
   if (isPast(date, startTime)) throw new TimePassedError();
 
+  // Eddy's own bookings (walk-ins, phone calls) don't count towards the limit.
+  const isAdmin = auth.currentUser?.uid === ADMIN_UID;
+  if (isAdmin || !request.phone) {
+    return confirmed(request, await bookInTransaction(request, null));
+  }
+
+  for (let seat = 1; seat <= MAX_ACTIVE_BOOKINGS_PER_PHONE; seat++) {
+    try {
+      return confirmed(request, await bookInTransaction(request, seat));
+    } catch (err) {
+      if (!isPermissionDenied(err)) throw err;
+    }
+  }
+  // Every seat refused. The page already checked everything else, so it's the limit
+  // (or the time passed while the customer was typing).
+  if (isPast(date, startTime)) throw new TimePassedError();
+  throw new TooManyBookingsError();
+}
+
+/** Checks the code rather than the class, which can differ if two copies of the SDK are loaded. */
+function isPermissionDenied(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'permission-denied';
+}
+
+function confirmed(request: BookingRequest, bookingCode: string): ConfirmedBooking {
+  return {
+    bookingCode,
+    name: request.name,
+    serviceName: request.service.name,
+    durationMinutes: request.service.durationMinutes,
+    date: request.date,
+    startTime: request.startTime,
+  };
+}
+
+/** Writes the booking, its slots and (if `seat` is given) the phone's seat. Returns the code. */
+function bookInTransaction(request: BookingRequest, seat: number | null): Promise<string> {
+  const { name, phone, service, date, startTime } = request;
+  const startAt = Timestamp.fromDate(zonedInstant(date, startTime, SHOP_TIME_ZONE));
   const slotRefs = slotsNeeded(startTime, service.durationMinutes).map((time) =>
     doc(db, 'slots', slotId(date, time)),
   );
 
-  const bookingCode = await runTransaction(db, async (tx) => {
+  return runTransaction(db, async (tx) => {
     // Firestore requires all reads before any writes in a transaction.
     const existing = await Promise.all(slotRefs.map((ref) => tx.get(ref)));
     if (existing.some((snap) => snap.exists())) throw new SlotTakenError();
@@ -169,6 +229,7 @@ export async function createBooking(request: BookingRequest): Promise<ConfirmedB
       serviceName: service.name,
       date,
       startTime,
+      startAt,
       durationMinutes: service.durationMinutes,
       bookingCode: code,
       status: 'booked',
@@ -177,17 +238,11 @@ export async function createBooking(request: BookingRequest): Promise<ConfirmedB
     for (const ref of slotRefs) {
       tx.set(ref, { bookingId: code, date });
     }
+    if (seat !== null) {
+      tx.set(doc(db, 'phoneLimits', `${phone}_${seat}`), { bookingId: code, startAt });
+    }
     return code;
   });
-
-  return {
-    bookingCode,
-    name,
-    serviceName: service.name,
-    durationMinutes: service.durationMinutes,
-    date,
-    startTime,
-  };
 }
 
 /** True if the booking exists and was made with this phone. */

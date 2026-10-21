@@ -1,0 +1,191 @@
+rules_version = '2';
+
+// Server-side checks for the booking site. The page validates too, but only these rules count.
+//
+// Collections (see src/data/api.ts):
+// - bookings/{bookingCode}   full booking; the code is the secret, so anyone may GET one but only Eddy may LIST.
+// - slots/{date}_{HHMM}      one doc per taken 15-min slot; no personal info, readable by all.
+// - phoneLimits/{phone}_{n}  n = 1 or 2: the two "seats" a phone number can hold. Each points at the
+//                            booking using it. A seat is free again once that booking has started or
+//                            is no longer "booked", so a phone can't hold more than 2 future bookings.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Keep in sync with ADMIN_UID in src/config.ts.
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == 'HHBoRoG4jphMLu2OjKpYTGJTKd42';
+    }
+
+    // Keep in sync with the services in src/data/fakeData.ts.
+    function services() {
+      return {
+        'haircut': { 'name': 'Haircut', 'duration': 30 },
+        'beard': { 'name': 'Beard', 'duration': 15 },
+        'haircut-beard': { 'name': 'Haircut + Beard', 'duration': 45 }
+      };
+    }
+
+    // DAYS_TO_SHOW in src/config.ts: today plus the next 3 days.
+    function daysToShow() {
+      return 4;
+    }
+
+    function bookingPath(id) {
+      return /databases/$(database)/documents/bookings/$(id);
+    }
+
+    function slotPath(id) {
+      return /databases/$(database)/documents/slots/$(id);
+    }
+
+    // "12:30" -> 750
+    function minutesOf(time) {
+      return int(time.split(':')[0]) * 60 + int(time.split(':')[1]);
+    }
+
+    function pad2(n) {
+      return n < 10 ? '0' + string(n) : string(n);
+    }
+
+    // ("2026-10-22", 750) -> "2026-10-22_1230", the ID of that slot doc.
+    function slotIdAt(date, minutes) {
+      return date + '_' + pad2(minutes / 60) + pad2(minutes % 60);
+    }
+
+    // ID of the i-th 15-min slot booking `b` occupies.
+    function nthSlotId(b, i) {
+      return slotIdAt(b.date, minutesOf(b.startTime) + i * 15);
+    }
+
+    // True if `b` has no i-th slot, or that slot doc ends up pointing at booking `id`.
+    // Services are at most 60 min (4 slots); add a line in slotsClaimed for longer ones.
+    function slotClaimed(b, id, i) {
+      return i * 15 >= b.durationMinutes
+        || getAfter(slotPath(nthSlotId(b, i))).data.bookingId == id;
+    }
+
+    function slotsClaimed(b, id) {
+      return slotClaimed(b, id, 0) && slotClaimed(b, id, 1)
+        && slotClaimed(b, id, 2) && slotClaimed(b, id, 3);
+    }
+
+    // True if `b` has no i-th slot, or that slot no longer belongs to booking `id` afterwards.
+    function slotReleased(b, id, i) {
+      return i * 15 >= b.durationMinutes
+        || !existsAfter(slotPath(nthSlotId(b, i)))
+        || getAfter(slotPath(nthSlotId(b, i))).data.bookingId != id;
+    }
+
+    function slotsReleased(b, id) {
+      return slotReleased(b, id, 0) && slotReleased(b, id, 1)
+        && slotReleased(b, id, 2) && slotReleased(b, id, 3);
+    }
+
+    // True if `slotId` is one of the slots booking `b` occupies.
+    function coversSlot(b, slotId) {
+      return (b.durationMinutes > 0 && slotId == nthSlotId(b, 0))
+        || (b.durationMinutes > 15 && slotId == nthSlotId(b, 1))
+        || (b.durationMinutes > 30 && slotId == nthSlotId(b, 2))
+        || (b.durationMinutes > 45 && slotId == nthSlotId(b, 3));
+    }
+
+    // startAt must be the shop's local date + time (Lebanon is UTC+2 in winter, UTC+3 in summer),
+    // in the future, and on a day the booking page offers.
+    function validStart(b) {
+      let d = b.date.split('-');
+      let day = timestamp.date(int(d[0]), int(d[1]), int(d[2]));
+      let local = day + duration.value(minutesOf(b.startTime), 'm');
+      return (b.startAt == local - duration.value(2, 'h') || b.startAt == local - duration.value(3, 'h'))
+        && b.startAt > request.time
+        && day <= request.time + duration.value(3, 'h') + duration.value(daysToShow() - 1, 'd');
+    }
+
+    // The phone's seat n ends up pointing at booking `id`.
+    function holdsSeat(b, id, n) {
+      return getAfter(/databases/$(database)/documents/phoneLimits/$(b.phone + '_' + string(n))).data.bookingId == id;
+    }
+
+    function validCustomerBooking(id) {
+      let b = request.resource.data;
+      let fields = ['name', 'phone', 'serviceId', 'serviceName', 'date', 'startTime', 'startAt',
+                    'durationMinutes', 'bookingCode', 'status', 'createdAt'];
+      return b.keys().hasAll(fields) && b.keys().hasOnly(fields)
+        && id.matches('^[A-HJ-NP-Z2-9]{6}$') && b.bookingCode == id
+        && b.name is string && b.name.size() >= 2 && b.name.size() <= 50 && b.name == b.name.trim()
+        && b.phone is string && b.phone.matches('^[+]961(3[0-9]{6}|(70|71|76|78|79|81)[0-9]{6})$')
+        && b.serviceId is string && b.serviceId in services()
+        && b.serviceName == services()[b.serviceId].name
+        && b.durationMinutes == services()[b.serviceId].duration
+        && b.date is string && b.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && b.startTime is string && b.startTime.matches('^([01][0-9]|2[0-3]):(00|15|30|45)$')
+        && b.startAt is timestamp && validStart(b)
+        && b.status == 'booked'
+        && b.createdAt == request.time
+        && slotsClaimed(b, id)
+        && (holdsSeat(b, id, 1) || holdsSeat(b, id, 2));
+    }
+
+    // Customer cancel: only "booked" -> "cancelled" with cancelledAt, before the start,
+    // and its slots must be freed in the same transaction.
+    function validCancel(id) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.status == 'booked'
+        && request.time < before.startAt
+        && after.diff(before).affectedKeys().hasOnly(['status', 'cancelledAt'])
+        && after.status == 'cancelled'
+        && after.cancelledAt == request.time
+        && slotsReleased(before, id);
+    }
+
+    match /bookings/{bookingId} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if isAdmin() || validCustomerBooking(bookingId);
+      allow update: if isAdmin() || validCancel(bookingId);
+      allow delete: if false;
+    }
+
+    match /slots/{slotId} {
+      allow read: if true;
+
+      // Only for a booking created in this same write (its createdAt is this request's time).
+      // A slot that already exists can't be "created": that write is an update, which is denied.
+      allow create: if isAdmin() || (
+        request.resource.data.keys().hasAll(['bookingId', 'date'])
+        && request.resource.data.keys().hasOnly(['bookingId', 'date'])
+        && getAfter(bookingPath(request.resource.data.bookingId)).data.createdAt == request.time
+        && getAfter(bookingPath(request.resource.data.bookingId)).data.date == request.resource.data.date
+        && coversSlot(getAfter(bookingPath(request.resource.data.bookingId)).data, slotId)
+      );
+
+      allow update: if isAdmin();
+
+      // Only when its booking goes from "booked" to "cancelled" in this same write.
+      allow delete: if isAdmin() || (
+        get(bookingPath(resource.data.bookingId)).data.status == 'booked'
+        && getAfter(bookingPath(resource.data.bookingId)).data.status == 'cancelled'
+      );
+    }
+
+    match /phoneLimits/{seatId} {
+      allow read: if isAdmin();
+
+      // Taking a seat: only for a booking created in this same write, with that booking's phone.
+      // Overwriting an existing seat is allowed only once it's free (its booking has started,
+      // or was cancelled / marked done / no-show).
+      allow create, update: if
+        request.resource.data.keys().hasAll(['bookingId', 'startAt'])
+        && request.resource.data.keys().hasOnly(['bookingId', 'startAt'])
+        && getAfter(bookingPath(request.resource.data.bookingId)).data.createdAt == request.time
+        && (seatId == getAfter(bookingPath(request.resource.data.bookingId)).data.phone + '_1'
+            || seatId == getAfter(bookingPath(request.resource.data.bookingId)).data.phone + '_2')
+        && request.resource.data.startAt == getAfter(bookingPath(request.resource.data.bookingId)).data.startAt
+        && (resource == null
+            || resource.data.startAt <= request.time
+            || get(bookingPath(resource.data.bookingId)).data.status != 'booked');
+    }
+
+    // Everything else is denied.
+  }
+}

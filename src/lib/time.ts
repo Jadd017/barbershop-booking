@@ -52,3 +52,28 @@ export function formatDayLong(key: DateKey): string {
     day: 'numeric',
   });
 }
+
+/** Minutes `timeZone` is ahead of UTC at `instant` (e.g. 180 for Beirut in summer). */
+function utcOffsetMinutes(timeZone: string, instant: Date): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+  }).formatToParts(instant);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'));
+  return Math.round((asUtc - instant.getTime()) / 60_000);
+}
+
+/** The real instant of `time` on `date` in `timeZone`, e.g. Beirut's "2026-10-22" "12:30". */
+export function zonedInstant(date: DateKey, time: TimeString, timeZone: string): Date {
+  const [y, m, d] = date.split('-').map(Number);
+  const wallClockAsUtc = Date.UTC(y, m - 1, d) + timeToMinutes(time) * 60_000;
+  // Guess with the offset at that wall-clock time, then correct once in case it crosses a DST change.
+  const guess = wallClockAsUtc - utcOffsetMinutes(timeZone, new Date(wallClockAsUtc)) * 60_000;
+  return new Date(wallClockAsUtc - utcOffsetMinutes(timeZone, new Date(guess)) * 60_000);
+}

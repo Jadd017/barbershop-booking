@@ -33,3 +33,18 @@ src/
 ```
 
 To switch to Firestore in phase 2, re-implement the functions in `src/data/api.ts` and keep their signatures.
+
+## Firestore security rules
+
+`firestore.rules` enforces everything on the server (the page's checks are only for UX):
+bookings can be fetched by code but only Eddy can list them, customer bookings are fully
+validated and must claim their slots in the same transaction, customers can only cancel
+(before the start time), and each phone can hold at most 2 upcoming bookings
+(via `phoneLimits/{phone}_{1|2}` "seats").
+
+The services, `ADMIN_UID` and `DAYS_TO_SHOW` are copied into the rules — keep them in sync.
+
+```bash
+npm run test:rules   # rules + data layer tests in the Firestore emulator (needs Java 21+)
+firebase deploy --only firestore:rules
+```

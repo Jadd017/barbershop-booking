@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { MAX_NAME_LENGTH } from '../../config';
 import { createBooking, SlotTakenError, TimePassedError } from '../../data/api';
 import { useStartTimes } from '../../hooks/useStartTimes';
 import { normalizeLebanesePhone } from '../../lib/phone';
@@ -131,6 +132,7 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
           <input
             type="text"
             autoComplete="off"
+            maxLength={MAX_NAME_LENGTH}
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={saving}

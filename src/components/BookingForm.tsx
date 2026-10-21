@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
-import { createBooking, SlotTakenError, TimePassedError } from '../data/api';
+import { MAX_ACTIVE_BOOKINGS_PER_PHONE, MAX_NAME_LENGTH } from '../config';
+import { createBooking, SlotTakenError, TimePassedError, TooManyBookingsError } from '../data/api';
 import { normalizeLebanesePhone } from '../lib/phone';
 import { formatDayLong } from '../lib/time';
 import type { ConfirmedBooking, DateKey, Service, TimeString } from '../types';
@@ -51,6 +52,10 @@ export function BookingForm({ service, date, startTime, onBooked, onCancel }: Pr
       } else if (err instanceof TimePassedError) {
         setSlotLost(true);
         setSubmitError('Sorry, this time has already passed, please pick another.');
+      } else if (err instanceof TooManyBookingsError) {
+        setSubmitError(
+          `This phone number already has ${MAX_ACTIVE_BOOKINGS_PER_PHONE} upcoming bookings. Cancel one to book another.`,
+        );
       } else {
         console.error(err);
         setSubmitError('Something went wrong. Check your connection and try again.');
@@ -76,6 +81,7 @@ export function BookingForm({ service, date, startTime, onBooked, onCancel }: Pr
           <input
             type="text"
             autoComplete="name"
+            maxLength={MAX_NAME_LENGTH}
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={submitting || slotLost}
