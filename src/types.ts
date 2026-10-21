@@ -25,8 +25,8 @@ export interface Settings {
 /** What the customer page sends when booking. */
 export interface BookingRequest {
   name: string;
-  /** Normalized, e.g. "+96170123456". */
-  phone: string;
+  /** Normalized, e.g. "+96170123456". Null only for walk-ins Eddy adds without a phone. */
+  phone: string | null;
   service: Service;
   date: DateKey;
   startTime: TimeString;
@@ -42,7 +42,7 @@ export interface ConfirmedBooking {
   startTime: TimeString;
 }
 
-export type BookingStatus = 'booked' | 'cancelled';
+export type BookingStatus = 'booked' | 'cancelled' | 'done' | 'no-show';
 
 /** Shown on the manage page once the code and phone match. */
 export interface ManagedBooking {
@@ -57,4 +57,18 @@ export interface ManagedBooking {
 export interface StartTimeOption {
   time: TimeString;
   available: boolean;
+}
+
+/** A booking as Eddy sees it on the dashboard. */
+export interface AdminBooking {
+  /** Firestore document ID (the booking code for every booking made since phase 3). */
+  id: string;
+  bookingCode: string;
+  name: string;
+  phone: string | null;
+  serviceName: string;
+  durationMinutes: number;
+  date: DateKey;
+  startTime: TimeString;
+  status: BookingStatus;
 }

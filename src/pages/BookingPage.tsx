@@ -6,15 +6,12 @@ import { DayPicker } from '../components/DayPicker';
 import { ServicePicker } from '../components/ServicePicker';
 import { TimeGrid } from '../components/TimeGrid';
 import { DAYS_TO_SHOW } from '../config';
-import { getSettings, subscribeTakenSlots } from '../data/api';
+import { getSettings } from '../data/api';
+import { useStartTimes } from '../hooks/useStartTimes';
 import { clearLastBooking, loadLastBooking, saveLastBooking, type LastBooking } from '../lib/lastBooking';
-import { getStartTimes } from '../lib/slots';
 import { formatDayLong, upcomingDateKeys } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
 import type { ConfirmedBooking, DateKey, Settings, TimeString } from '../types';
-
-/** How often "now" is refreshed, so today's times grey out as they pass. */
-const CLOCK_TICK_MS = 30_000;
 
 export function BookingPage() {
   const days = useMemo(() => upcomingDateKeys(DAYS_TO_SHOW), []);
@@ -23,10 +20,6 @@ export function BookingPage() {
   const [serviceId, setServiceId] = useState<string | null>(null);
   const [day, setDay] = useState<DateKey>(days[0]);
   const [time, setTime] = useState<TimeString | null>(null);
-  // Taken slots are tagged with the day they belong to, so stale data is never shown.
-  const [taken, setTaken] = useState<{ day: DateKey; slots: Set<TimeString> } | null>(null);
-  const [slotsError, setSlotsError] = useState(false);
-  const [now, setNow] = useState(() => new Date());
   const [formOpen, setFormOpen] = useState(false);
   // Restored on load so returning from WhatsApp brings the confirmation back.
   const [confirmed, setConfirmed] = useState<LastBooking | null>(loadLastBooking);
@@ -35,32 +28,8 @@ export function BookingPage() {
     getSettings().then(setSettings);
   }, []);
 
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), CLOCK_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    return subscribeTakenSlots(
-      day,
-      (slots) => {
-        setTaken({ day, slots });
-        setSlotsError(false);
-      },
-      (error) => {
-        console.error(error);
-        setSlotsError(true);
-      },
-    );
-  }, [day]);
-
   const service = settings?.services.find((s) => s.id === serviceId) ?? null;
-  const takenSlots = taken?.day === day ? taken.slots : null;
-
-  const startTimes = useMemo(() => {
-    if (!settings || !service || !takenSlots) return null;
-    return getStartTimes(day, service.durationMinutes, settings, takenSlots, now);
-  }, [settings, service, day, takenSlots, now]);
+  const { startTimes, error: slotsError } = useStartTimes(day, service, settings);
 
   // If someone else books the selected time (or it passes), drop the selection.
   const selectedTime = startTimes?.some((o) => o.time === time && o.available) ? time : null;

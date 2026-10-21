@@ -16,11 +16,14 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  updateDoc,
   where,
+  type DocumentData,
 } from 'firebase/firestore';
 import { generateBookingCode } from '../lib/bookingCode';
 import { isPast, slotsNeeded } from '../lib/slots';
 import type {
+  AdminBooking,
   BookingRequest,
   BookingStatus,
   ConfirmedBooking,
@@ -65,6 +68,14 @@ export class BookingNotFoundError extends Error {
   }
 }
 
+/** Thrown when cancelling a booking that is already done or marked as a no-show. */
+export class NotCancellableError extends Error {
+  constructor() {
+    super('Booking can no longer be cancelled');
+    this.name = 'NotCancellableError';
+  }
+}
+
 /** Thrown when cancelling a booking that is already cancelled. */
 export class AlreadyCancelledError extends Error {
   constructor() {
@@ -86,7 +97,7 @@ const MAX_CODE_ATTEMPTS = 5;
 /** Shape of a document in the "bookings" collection. */
 interface BookingDoc {
   name: string;
-  phone: string;
+  phone: string | null;
   serviceId: string;
   serviceName: string;
   date: DateKey;
@@ -205,16 +216,20 @@ export async function findBooking(bookingCode: string, phone: string): Promise<M
 
 /**
  * Cancels atomically: marks the booking cancelled and deletes its slot docs,
- * so the times free up for everyone at once. Refuses past or already-cancelled bookings.
+ * so the times free up for everyone at once. Only "booked" bookings can be cancelled.
+ * `check` runs inside the transaction for caller-specific rules (phone match, past time).
  */
-export async function cancelBooking(bookingCode: string, phone: string): Promise<void> {
-  const bookingRef = doc(db, 'bookings', bookingCode);
+async function cancelInTransaction(
+  bookingId: string,
+  check: (data: BookingDoc | undefined) => asserts data is BookingDoc,
+): Promise<void> {
+  const bookingRef = doc(db, 'bookings', bookingId);
 
   await runTransaction(db, async (tx) => {
     const data = (await tx.get(bookingRef)).data() as BookingDoc | undefined;
-    if (!matches(data, phone)) throw new BookingNotFoundError();
+    check(data);
     if (data.status === 'cancelled') throw new AlreadyCancelledError();
-    if (isPast(data.date, data.startTime)) throw new TimePassedError();
+    if (data.status !== 'booked') throw new NotCancellableError();
 
     const slotRefs = slotsNeeded(data.startTime, data.durationMinutes).map((time) =>
       doc(db, 'slots', slotId(data.date, time)),
@@ -224,7 +239,71 @@ export async function cancelBooking(bookingCode: string, phone: string): Promise
     tx.update(bookingRef, { status: 'cancelled', cancelledAt: serverTimestamp() });
     // Only delete slots that still belong to this booking.
     for (const slot of slots) {
-      if (slot.get('bookingId') === bookingCode) tx.delete(slot.ref);
+      if (slot.get('bookingId') === bookingId) tx.delete(slot.ref);
     }
   });
+}
+
+/** Customer cancel: the phone must match, and the start time must not have passed. */
+export function cancelBooking(bookingCode: string, phone: string): Promise<void> {
+  return cancelInTransaction(bookingCode, (data) => {
+    if (!matches(data, phone)) throw new BookingNotFoundError();
+    if (isPast(data.date, data.startTime)) throw new TimePassedError();
+  });
+}
+
+/** Admin cancel: no phone check, and Eddy may cancel at any time. */
+export function adminCancelBooking(bookingId: string): Promise<void> {
+  return cancelInTransaction(bookingId, (data) => {
+    if (!data) throw new BookingNotFoundError();
+  });
+}
+
+/**
+ * Marks a booking as done or as a no-show, or back to booked to undo a mistap.
+ * Slots stay taken either way, so this can never cause a double booking.
+ */
+export function setBookingStatus(
+  bookingId: string,
+  status: 'booked' | 'done' | 'no-show',
+): Promise<void> {
+  return updateDoc(doc(db, 'bookings', bookingId), {
+    status,
+    statusChangedAt: serverTimestamp(),
+  });
+}
+
+function toAdminBooking(id: string, data: DocumentData): AdminBooking {
+  const b = data as BookingDoc;
+  return {
+    id,
+    bookingCode: b.bookingCode ?? id,
+    name: b.name,
+    phone: b.phone ?? null,
+    serviceName: b.serviceName,
+    durationMinutes: b.durationMinutes,
+    date: b.date,
+    startTime: b.startTime,
+    status: b.status,
+  };
+}
+
+/** Listens to every booking on `date` (all statuses), sorted by start time. */
+export function subscribeBookings(
+  date: DateKey,
+  onChange: (bookings: AdminBooking[]) => void,
+  onError: (error: Error) => void,
+): () => void {
+  // Sorted here rather than with orderBy, so Firestore doesn't need a composite index.
+  const q = query(collection(db, 'bookings'), where('date', '==', date));
+  return onSnapshot(
+    q,
+    (snapshot) =>
+      onChange(
+        snapshot.docs
+          .map((d) => toAdminBooking(d.id, d.data()))
+          .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+      ),
+    onError,
+  );
 }

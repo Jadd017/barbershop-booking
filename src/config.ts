@@ -6,3 +6,6 @@ export const SLOT_MINUTES = 15;
 
 /** Eddy's WhatsApp number, in international format. */
 export const BARBER_WHATSAPP = '+96176139388';
+
+/** Firebase Auth UID of the only user allowed into /admin (Eddy). */
+export const ADMIN_UID = 'HHBoRoG4jphMLu2OjKpYTGJTKd42';

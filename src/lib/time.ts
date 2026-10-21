@@ -23,6 +23,12 @@ export function fromDateKey(key: DateKey): Date {
   return new Date(y, m - 1, d);
 }
 
+/** The date key `days` days after `key` (negative goes back). */
+export function addDays(key: DateKey, days: number): DateKey {
+  const date = fromDateKey(key);
+  return toDateKey(new Date(date.getFullYear(), date.getMonth(), date.getDate() + days));
+}
+
 /** Date keys for `count` consecutive days starting at `from` (local time). */
 export function upcomingDateKeys(count: number, from: Date = new Date()): DateKey[] {
   return Array.from({ length: count }, (_, i) => {

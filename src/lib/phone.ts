@@ -18,3 +18,10 @@ export function normalizeLebanesePhone(input: string): string | null {
 
   return LEBANESE_MOBILE.test(digits) ? `+961${digits}` : null;
 }
+
+/** "+96170123456" → "+961 70 123 456", "+9613123456" → "+961 3 123 456". */
+export function formatLebanesePhone(phone: string): string {
+  const local = phone.replace(/^\+961/, '');
+  const prefixLength = local.length === 7 ? 1 : 2;
+  return `+961 ${local.slice(0, prefixLength)} ${local.slice(prefixLength, -3)} ${local.slice(-3)}`;
+}

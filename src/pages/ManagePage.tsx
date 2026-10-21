@@ -5,6 +5,7 @@ import {
   BookingNotFoundError,
   cancelBooking,
   findBooking,
+  NotCancellableError,
   TimePassedError,
 } from '../data/api';
 import { normalizeBookingCode } from '../lib/bookingCode';
@@ -12,7 +13,14 @@ import { clearLastBooking, loadLastBooking } from '../lib/lastBooking';
 import { normalizeLebanesePhone } from '../lib/phone';
 import { isPast } from '../lib/slots';
 import { formatDayLong } from '../lib/time';
-import type { ManagedBooking } from '../types';
+import type { BookingStatus, ManagedBooking } from '../types';
+
+const STATUS_LABELS: Record<BookingStatus, string> = {
+  booked: 'Booked',
+  cancelled: 'Cancelled',
+  done: 'Done',
+  'no-show': 'Missed',
+};
 
 /** Same message for a wrong code and a wrong phone, so nobody can tell which part was wrong. */
 const NOT_FOUND_MESSAGE = "We couldn't find a booking with that code and phone number.";
@@ -74,7 +82,7 @@ export function ManagePage() {
     } catch (err) {
       if (err instanceof AlreadyCancelledError) {
         setFound({ ...found, booking: { ...found.booking, status: 'cancelled' } });
-      } else if (err instanceof TimePassedError) {
+      } else if (err instanceof TimePassedError || err instanceof NotCancellableError) {
         setCancelError("This appointment's time has passed, so it can't be cancelled.");
       } else {
         console.error(err);
@@ -187,7 +195,8 @@ function BookingDetails({
   onLookUpAnother,
 }: DetailsProps) {
   const cancelled = booking.status === 'cancelled';
-  const past = isPast(booking.date, booking.startTime);
+  // Done and no-show bookings are over too, even if Eddy marked them early.
+  const past = isPast(booking.date, booking.startTime) || booking.status !== 'booked';
 
   return (
     <>
@@ -213,7 +222,7 @@ function BookingDetails({
         <div className="flex justify-between py-1">
           <dt className="text-neutral-500">Status</dt>
           <dd className={`font-semibold ${cancelled ? 'text-red-600' : 'text-green-700'}`}>
-            {cancelled ? 'Cancelled' : 'Booked'}
+            {STATUS_LABELS[booking.status]}
           </dd>
         </div>
       </dl>
