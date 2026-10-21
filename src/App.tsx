@@ -1,14 +1,16 @@
-import { BrowserRouter, Route, Routes } from 'react-router';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import { AdminPage } from './pages/AdminPage';
 import { BookingPage } from './pages/BookingPage';
-import { ManagePage } from './pages/ManagePage';
+import { MyBookingsPage } from './pages/MyBookingsPage';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<BookingPage />} />
-        <Route path="/manage" element={<ManagePage />} />
+        <Route path="/my-bookings" element={<MyBookingsPage />} />
+        {/* Where the old code + phone lookup was, in case someone saved the link. */}
+        <Route path="/manage" element={<Navigate to="/my-bookings" replace />} />
         <Route path="/admin" element={<AdminPage />} />
       </Routes>
     </BrowserRouter>

@@ -54,15 +54,16 @@ export function Confirmation({ booking, barberName, onDone }: Props) {
         {booking.bookingCode}
       </p>
       <p className="mb-8 text-sm text-neutral-600">
-        Save this code (take a screenshot). You'll need it to manage your booking.
+        It's in your WhatsApp message to {barberName}. You can see or cancel this booking any
+        time under "My bookings".
       </p>
 
       <div className="flex flex-col gap-3">
         <Link
-          to={`/manage?code=${booking.bookingCode}`}
+          to="/my-bookings"
           className="rounded-xl border border-neutral-300 px-5 py-3 font-semibold hover:border-neutral-500"
         >
-          Manage booking
+          My bookings
         </Link>
         <button
           type="button"

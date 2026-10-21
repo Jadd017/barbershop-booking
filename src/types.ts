@@ -44,14 +44,20 @@ export interface ConfirmedBooking {
 
 export type BookingStatus = 'booked' | 'cancelled' | 'done' | 'no-show';
 
-/** Shown on the manage page once the code and phone match. */
-export interface ManagedBooking {
+/** One of the signed-in customer's bookings, on the "My bookings" page. */
+export interface CustomerBooking {
   bookingCode: string;
   serviceName: string;
   durationMinutes: number;
   date: DateKey;
   startTime: TimeString;
   status: BookingStatus;
+}
+
+/** What a customer last booked with, to pre-fill their next booking. */
+export interface CustomerProfile {
+  name: string;
+  phone: string;
 }
 
 export interface StartTimeOption {
@@ -71,4 +77,6 @@ export interface AdminBooking {
   date: DateKey;
   startTime: TimeString;
   status: BookingStatus;
+  /** The Google account that booked; null for walk-ins Eddy added. */
+  customerEmail: string | null;
 }

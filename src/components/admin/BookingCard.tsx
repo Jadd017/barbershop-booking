@@ -75,6 +75,9 @@ export function BookingCard({ booking }: { booking: AdminBooking }) {
       ) : (
         <p className="mb-1 text-sm text-neutral-500">No phone</p>
       )}
+      {booking.customerEmail && (
+        <p className="mb-1 break-all text-sm text-neutral-600">{booking.customerEmail}</p>
+      )}
       <p className="text-sm text-neutral-500">
         Code <span className="font-mono font-semibold tracking-wider">{booking.bookingCode}</span>
       </p>

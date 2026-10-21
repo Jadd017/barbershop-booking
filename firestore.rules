@@ -2,18 +2,33 @@ rules_version = '2';
 
 // Server-side checks for the booking site. The page validates too, but only these rules count.
 //
+// Customers sign in with Google to book; Eddy signs in with email/password.
+//
 // Collections (see src/data/api.ts):
-// - bookings/{bookingCode}   full booking; the code is the secret, so anyone may GET one but only Eddy may LIST.
+// - bookings/{bookingCode}   full booking. Customers can read and cancel only their own (customerUid);
+//                            Eddy can read everything. Walk-ins Eddy adds have customerUid null.
 // - slots/{date}_{HHMM}      one doc per taken 15-min slot; no personal info, readable by all.
 // - phoneLimits/{phone}_{n}  n = 1 or 2: the two "seats" a phone number can hold. Each points at the
 //                            booking using it. A seat is free again once that booking has started or
 //                            is no longer "booked", so a phone can't hold more than 2 future bookings.
+// - userLimits/{uid}_{n}     the same two seats per Google account.
+// - customers/{uid}          the name and phone last used, to pre-fill the form. Only they and Eddy read it.
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // Keep in sync with ADMIN_UID in src/config.ts.
     function isAdmin() {
       return request.auth != null && request.auth.uid == 'HHBoRoG4jphMLu2OjKpYTGJTKd42';
+    }
+
+    // A customer signed in with Google (not Eddy's email account, nor any other sign-in method).
+    function isCustomer() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+
+    // The signed-in customer owns booking `b`.
+    function ownsBooking(b) {
+      return isCustomer() && b.customerUid == request.auth.uid;
     }
 
     // Keep in sync with the services in src/data/fakeData.ts.
@@ -100,19 +115,31 @@ service cloud.firestore {
         && day <= request.time + duration.value(3, 'h') + duration.value(daysToShow() - 1, 'd');
     }
 
-    // The phone's seat n ends up pointing at booking `id`.
-    function holdsSeat(b, id, n) {
-      return getAfter(/databases/$(database)/documents/phoneLimits/$(b.phone + '_' + string(n))).data.bookingId == id;
+    // Seat n of `owner` in `collection` ends up pointing at booking `id`.
+    function holdsSeat(collection, owner, id, n) {
+      return getAfter(/databases/$(database)/documents/$(collection)/$(owner + '_' + string(n))).data.bookingId == id;
+    }
+
+    function validName(name) {
+      return name is string && name.size() >= 2 && name.size() <= 50 && name == name.trim();
+    }
+
+    function validPhone(phone) {
+      return phone is string && phone.matches('^[+]961(3[0-9]{6}|(70|71|76|78|79|81)[0-9]{6})$');
     }
 
     function validCustomerBooking(id) {
       let b = request.resource.data;
       let fields = ['name', 'phone', 'serviceId', 'serviceName', 'date', 'startTime', 'startAt',
-                    'durationMinutes', 'bookingCode', 'status', 'createdAt'];
-      return b.keys().hasAll(fields) && b.keys().hasOnly(fields)
+                    'durationMinutes', 'bookingCode', 'status', 'createdAt',
+                    'customerUid', 'customerEmail'];
+      return isCustomer()
+        && b.keys().hasAll(fields) && b.keys().hasOnly(fields)
+        && b.customerUid == request.auth.uid
+        && b.customerEmail == request.auth.token.email
         && id.matches('^[A-HJ-NP-Z2-9]{6}$') && b.bookingCode == id
-        && b.name is string && b.name.size() >= 2 && b.name.size() <= 50 && b.name == b.name.trim()
-        && b.phone is string && b.phone.matches('^[+]961(3[0-9]{6}|(70|71|76|78|79|81)[0-9]{6})$')
+        && validName(b.name)
+        && validPhone(b.phone)
         && b.serviceId is string && b.serviceId in services()
         && b.serviceName == services()[b.serviceId].name
         && b.durationMinutes == services()[b.serviceId].duration
@@ -122,15 +149,17 @@ service cloud.firestore {
         && b.status == 'booked'
         && b.createdAt == request.time
         && slotsClaimed(b, id)
-        && (holdsSeat(b, id, 1) || holdsSeat(b, id, 2));
+        && (holdsSeat('phoneLimits', b.phone, id, 1) || holdsSeat('phoneLimits', b.phone, id, 2))
+        && (holdsSeat('userLimits', b.customerUid, id, 1) || holdsSeat('userLimits', b.customerUid, id, 2));
     }
 
-    // Customer cancel: only "booked" -> "cancelled" with cancelledAt, before the start,
-    // and its slots must be freed in the same transaction.
+    // Customer cancel: only their own booking, only "booked" -> "cancelled" with cancelledAt,
+    // before the start, and its slots must be freed in the same transaction.
     function validCancel(id) {
       let before = resource.data;
       let after = request.resource.data;
-      return before.status == 'booked'
+      return ownsBooking(before)
+        && before.status == 'booked'
         && request.time < before.startAt
         && after.diff(before).affectedKeys().hasOnly(['status', 'cancelledAt'])
         && after.status == 'cancelled'
@@ -138,9 +167,29 @@ service cloud.firestore {
         && slotsReleased(before, id);
     }
 
+    // Taking a seat (see the top of this file): only for a booking created in this same write,
+    // and only a seat of that booking's `ownerField` (its phone or customerUid). Overwriting an
+    // existing seat is allowed only once it's free (its booking has started, or was cancelled /
+    // marked done / no-show).
+    function validSeatClaim(seatId, ownerField) {
+      let seat = request.resource.data;
+      let b = getAfter(bookingPath(seat.bookingId)).data;
+      return seat.keys().hasAll(['bookingId', 'startAt'])
+        && seat.keys().hasOnly(['bookingId', 'startAt'])
+        && b.createdAt == request.time
+        && (seatId == b[ownerField] + '_1' || seatId == b[ownerField] + '_2')
+        && seat.startAt == b.startAt
+        && (resource == null
+            || resource.data.startAt <= request.time
+            || get(bookingPath(resource.data.bookingId)).data.status != 'booked');
+    }
+
     match /bookings/{bookingId} {
-      allow get: if true;
-      allow list: if isAdmin();
+      // A customer may also get a code nobody uses yet (to pick a free one); that only
+      // tells them the code is free, never anything about someone else's booking.
+      allow get: if isAdmin() || (isCustomer() && (resource == null || ownsBooking(resource.data)));
+      // Customers may only list with a `customerUid == their UID` filter.
+      allow list: if isAdmin() || ownsBooking(resource.data);
       allow create: if isAdmin() || validCustomerBooking(bookingId);
       allow update: if isAdmin() || validCancel(bookingId);
       allow delete: if false;
@@ -169,21 +218,26 @@ service cloud.firestore {
     }
 
     match /phoneLimits/{seatId} {
+      // Customers can't read these: they hold booking codes of whoever used that phone.
       allow read: if isAdmin();
+      allow create, update: if isCustomer() && validSeatClaim(seatId, 'phone');
+    }
 
-      // Taking a seat: only for a booking created in this same write, with that booking's phone.
-      // Overwriting an existing seat is allowed only once it's free (its booking has started,
-      // or was cancelled / marked done / no-show).
-      allow create, update: if
-        request.resource.data.keys().hasAll(['bookingId', 'startAt'])
-        && request.resource.data.keys().hasOnly(['bookingId', 'startAt'])
-        && getAfter(bookingPath(request.resource.data.bookingId)).data.createdAt == request.time
-        && (seatId == getAfter(bookingPath(request.resource.data.bookingId)).data.phone + '_1'
-            || seatId == getAfter(bookingPath(request.resource.data.bookingId)).data.phone + '_2')
-        && request.resource.data.startAt == getAfter(bookingPath(request.resource.data.bookingId)).data.startAt
-        && (resource == null
-            || resource.data.startAt <= request.time
-            || get(bookingPath(resource.data.bookingId)).data.status != 'booked');
+    match /userLimits/{seatId} {
+      // A customer may read their own two seats, to pick a free one.
+      allow get: if isAdmin()
+        || (isCustomer() && (seatId == request.auth.uid + '_1' || seatId == request.auth.uid + '_2'));
+      allow create, update: if isCustomer() && validSeatClaim(seatId, 'customerUid');
+    }
+
+    match /customers/{uid} {
+      allow get: if isAdmin() || (isCustomer() && request.auth.uid == uid);
+      allow create, update: if isCustomer() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['name', 'phone', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'updatedAt'])
+        && validName(request.resource.data.name)
+        && validPhone(request.resource.data.phone)
+        && request.resource.data.updatedAt == request.time;
     }
 
     // Everything else is denied.

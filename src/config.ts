@@ -16,5 +16,8 @@ export const SHOP_TIME_ZONE = 'Asia/Beirut';
 /** Most upcoming bookings one phone number can hold (enforced by firestore.rules). */
 export const MAX_ACTIVE_BOOKINGS_PER_PHONE = 2;
 
+/** Most upcoming bookings one Google account can hold (enforced by firestore.rules). */
+export const MAX_ACTIVE_BOOKINGS_PER_ACCOUNT = 2;
+
 /** Longest name a booking can have (enforced by firestore.rules). */
 export const MAX_NAME_LENGTH = 50;

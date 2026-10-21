@@ -2,14 +2,20 @@
  * Data access layer. The UI only talks to these functions.
  * Settings are still local fake data; bookings live in Firestore.
  *
+ * Customers book signed in with Google (see ./auth.ts); Eddy signs in with email/password.
+ *
  * Firestore layout:
- * - bookings/{bookingCode}: the full booking, including the customer's name and phone.
- *   Using the code as the ID lets a customer fetch their own booking without listing others.
+ * - bookings/{bookingCode}: the full booking, including the customer's name, phone, Google UID
+ *   (customerUid) and email. Customers can only read and cancel their own; walk-ins Eddy adds
+ *   have customerUid null.
  * - slots/{date}_{HHMM}: one doc per taken 15-min slot, holding only bookingId and date,
  *   so the customer page can see which times are taken without reading anyone's details.
  * - phoneLimits/{phone}_{1|2}: the two "seats" a phone number can hold, each pointing at a booking.
  *   Customers can't read them; firestore.rules only lets a booking take a free seat, which
  *   caps each phone at MAX_ACTIVE_BOOKINGS_PER_PHONE upcoming bookings.
+ * - userLimits/{uid}_{1|2}: the same seats per Google account (MAX_ACTIVE_BOOKINGS_PER_ACCOUNT).
+ *   A customer can read their own, so the right one is picked up front.
+ * - customers/{uid}: the name and phone they last booked with, to pre-fill the form.
  *
  * firestore.rules re-checks everything written here, so keep the two in step.
  */
@@ -21,12 +27,19 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   Timestamp,
   where,
   type DocumentData,
+  type Transaction,
 } from 'firebase/firestore';
-import { ADMIN_UID, MAX_ACTIVE_BOOKINGS_PER_PHONE, SHOP_TIME_ZONE } from '../config';
+import {
+  ADMIN_UID,
+  MAX_ACTIVE_BOOKINGS_PER_ACCOUNT,
+  MAX_ACTIVE_BOOKINGS_PER_PHONE,
+  SHOP_TIME_ZONE,
+} from '../config';
 import { generateBookingCode } from '../lib/bookingCode';
 import { isPast, slotsNeeded } from '../lib/slots';
 import { zonedInstant } from '../lib/time';
@@ -35,12 +48,14 @@ import type {
   BookingRequest,
   BookingStatus,
   ConfirmedBooking,
+  CustomerBooking,
+  CustomerProfile,
   DateKey,
-  ManagedBooking,
   Settings,
   TimeString,
 } from '../types';
 import { fakeSettings } from './fakeData';
+import { isGoogleUser } from './auth';
 import { auth, db } from './firebase';
 
 /** Simulated network latency so loading states are exercised. */
@@ -68,7 +83,15 @@ export class TimePassedError extends Error {
   }
 }
 
-/** Thrown when no booking matches the code and phone (deliberately doesn't say which). */
+/** Thrown when booking as a customer without being signed in with Google. */
+export class SignInRequiredError extends Error {
+  constructor() {
+    super('Sign in with Google to book');
+    this.name = 'SignInRequiredError';
+  }
+}
+
+/** Thrown when the booking doesn't exist, or isn't the signed-in customer's. */
 export class BookingNotFoundError extends Error {
   constructor() {
     super('Booking not found');
@@ -92,10 +115,13 @@ export class AlreadyCancelledError extends Error {
   }
 }
 
-/** Thrown when the phone already has the maximum number of upcoming bookings. */
+/** Thrown when the phone, or the Google account, already has the maximum upcoming bookings. */
 export class TooManyBookingsError extends Error {
-  constructor() {
-    super('Too many upcoming bookings for this phone');
+  readonly limitedBy: 'phone' | 'account';
+
+  constructor(limitedBy: 'phone' | 'account') {
+    super(`Too many upcoming bookings for this ${limitedBy}`);
+    this.limitedBy = limitedBy;
     this.name = 'TooManyBookingsError';
   }
 }
@@ -123,6 +149,21 @@ interface BookingDoc {
   durationMinutes: number;
   bookingCode: string;
   status: BookingStatus;
+  /** Null for walk-ins Eddy adds; missing on bookings made before customers signed in. */
+  customerUid?: string | null;
+  customerEmail?: string | null;
+}
+
+/** Shape of a phoneLimits / userLimits seat. */
+interface SeatDoc {
+  bookingId: string;
+  startAt: Timestamp;
+}
+
+/** The signed-in customer a booking is made for. */
+interface Customer {
+  uid: string;
+  email: string | null;
 }
 
 /** "2026-10-22" + "12:30" → "2026-10-22_1230" */
@@ -159,30 +200,36 @@ export function subscribeTakenSlots(
  * free, creates the booking and its slot docs together. If any slot is taken,
  * nothing is written and SlotTakenError is thrown.
  *
- * Customer bookings also take one of the phone's seats (see the top of this file).
- * Seats can't be read, so it tries each in turn: the rules refuse a seat in use.
+ * Customer bookings also take one of their Google account's seats and one of the
+ * phone's seats (see the top of this file). The account's seats are read in the
+ * transaction; the phone's can't be read, so it tries each in turn: the rules refuse
+ * a seat in use. Afterwards the name and phone are saved to pre-fill the next booking.
  */
 export async function createBooking(request: BookingRequest): Promise<ConfirmedBooking> {
   const { date, startTime } = request;
   if (isPast(date, startTime)) throw new TimePassedError();
 
-  // Eddy's own bookings (walk-ins, phone calls) don't count towards the limit.
-  const isAdmin = auth.currentUser?.uid === ADMIN_UID;
-  if (isAdmin || !request.phone) {
+  // Eddy's own bookings (walk-ins, phone calls) don't count towards the limits.
+  const user = auth.currentUser;
+  if (user?.uid === ADMIN_UID) {
     return confirmed(request, await bookInTransaction(request, null));
   }
+  if (!user || !isGoogleUser(user) || !request.phone) throw new SignInRequiredError();
 
-  for (let seat = 1; seat <= MAX_ACTIVE_BOOKINGS_PER_PHONE; seat++) {
+  const customer = { uid: user.uid, email: user.email };
+  for (let phoneSeat = 1; phoneSeat <= MAX_ACTIVE_BOOKINGS_PER_PHONE; phoneSeat++) {
     try {
-      return confirmed(request, await bookInTransaction(request, seat));
+      const code = await bookInTransaction(request, { customer, phoneSeat });
+      await saveCustomerProfile(customer.uid, { name: request.name, phone: request.phone });
+      return confirmed(request, code);
     } catch (err) {
       if (!isPermissionDenied(err)) throw err;
     }
   }
-  // Every seat refused. The page already checked everything else, so it's the limit
+  // Every phone seat refused. The page already checked everything else, so it's the limit
   // (or the time passed while the customer was typing).
   if (isPast(date, startTime)) throw new TimePassedError();
-  throw new TooManyBookingsError();
+  throw new TooManyBookingsError('phone');
 }
 
 /** Checks the code rather than the class, which can differ if two copies of the SDK are loaded. */
@@ -201,18 +248,43 @@ function confirmed(request: BookingRequest, bookingCode: string): ConfirmedBooki
   };
 }
 
-/** Writes the booking, its slots and (if `seat` is given) the phone's seat. Returns the code. */
-function bookInTransaction(request: BookingRequest, seat: number | null): Promise<string> {
+/**
+ * Reads the customer's seats in `tx` and returns the number of a free one.
+ * A seat is free once its booking has started or is no longer "booked".
+ * Throws TooManyBookingsError('account') if both are in use.
+ */
+async function freeAccountSeat(tx: Transaction, uid: string): Promise<number> {
+  for (let seat = 1; seat <= MAX_ACTIVE_BOOKINGS_PER_ACCOUNT; seat++) {
+    const snap = await tx.get(doc(db, 'userLimits', `${uid}_${seat}`));
+    const data = snap.data() as SeatDoc | undefined;
+    if (!data || data.startAt.toMillis() <= Date.now()) return seat;
+    const booking = await tx.get(doc(db, 'bookings', data.bookingId));
+    if (booking.get('status') !== 'booked') return seat;
+  }
+  throw new TooManyBookingsError('account');
+}
+
+/**
+ * Writes the booking and its slots, plus (for a customer) the account seat and phone seat
+ * `phoneSeat`. Returns the code.
+ */
+function bookInTransaction(
+  request: BookingRequest,
+  forCustomer: { customer: Customer; phoneSeat: number } | null,
+): Promise<string> {
   const { name, phone, service, date, startTime } = request;
   const startAt = Timestamp.fromDate(zonedInstant(date, startTime, SHOP_TIME_ZONE));
   const slotRefs = slotsNeeded(startTime, service.durationMinutes).map((time) =>
     doc(db, 'slots', slotId(date, time)),
   );
+  const customer = forCustomer?.customer ?? null;
 
   return runTransaction(db, async (tx) => {
     // Firestore requires all reads before any writes in a transaction.
     const existing = await Promise.all(slotRefs.map((ref) => tx.get(ref)));
     if (existing.some((snap) => snap.exists())) throw new SlotTakenError();
+
+    const accountSeat = customer ? await freeAccountSeat(tx, customer.uid) : null;
 
     // The code is the document ID, so pick one that isn't used yet.
     let code: string | null = null;
@@ -234,45 +306,77 @@ function bookInTransaction(request: BookingRequest, seat: number | null): Promis
       bookingCode: code,
       status: 'booked',
       createdAt: serverTimestamp(),
+      customerUid: customer?.uid ?? null,
+      customerEmail: customer?.email ?? null,
     });
     for (const ref of slotRefs) {
       tx.set(ref, { bookingId: code, date });
     }
-    if (seat !== null) {
-      tx.set(doc(db, 'phoneLimits', `${phone}_${seat}`), { bookingId: code, startAt });
+    if (customer && forCustomer) {
+      tx.set(doc(db, 'userLimits', `${customer.uid}_${accountSeat}`), { bookingId: code, startAt });
+      tx.set(doc(db, 'phoneLimits', `${phone}_${forCustomer.phoneSeat}`), {
+        bookingId: code,
+        startAt,
+      });
     }
     return code;
   });
 }
 
-/** True if the booking exists and was made with this phone. */
-function matches(data: BookingDoc | undefined, phone: string): data is BookingDoc {
-  return data !== undefined && data.phone === phone;
+/** The name and phone the customer last booked with, or null before their first booking. */
+export async function getCustomerProfile(uid: string): Promise<CustomerProfile | null> {
+  const data = (await getDoc(doc(db, 'customers', uid))).data();
+  return data ? { name: data.name, phone: data.phone } : null;
+}
+
+/** Best effort: the booking is already made, so a failure here only loses the pre-fill. */
+async function saveCustomerProfile(uid: string, profile: CustomerProfile): Promise<void> {
+  try {
+    await setDoc(doc(db, 'customers', uid), { ...profile, updatedAt: serverTimestamp() });
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function toCustomerBooking(data: DocumentData): CustomerBooking {
+  const b = data as BookingDoc;
+  return {
+    bookingCode: b.bookingCode,
+    serviceName: b.serviceName,
+    durationMinutes: b.durationMinutes,
+    date: b.date,
+    startTime: b.startTime,
+    status: b.status,
+  };
 }
 
 /**
- * Fetches a booking by its code, only if `phone` (normalized) matches.
- * Throws BookingNotFoundError for a wrong code or a wrong phone alike.
+ * Listens to every booking of the customer `uid` (all statuses and dates), soonest first.
+ * Returns a function that stops listening.
  */
-export async function findBooking(bookingCode: string, phone: string): Promise<ManagedBooking> {
-  const snap = await getDoc(doc(db, 'bookings', bookingCode));
-  const data = snap.data() as BookingDoc | undefined;
-  if (!matches(data, phone)) throw new BookingNotFoundError();
-
-  return {
-    bookingCode,
-    serviceName: data.serviceName,
-    durationMinutes: data.durationMinutes,
-    date: data.date,
-    startTime: data.startTime,
-    status: data.status,
-  };
+export function subscribeMyBookings(
+  uid: string,
+  onChange: (bookings: CustomerBooking[]) => void,
+  onError: (error: Error) => void,
+): () => void {
+  // Sorted here rather than with orderBy, so Firestore doesn't need a composite index.
+  const q = query(collection(db, 'bookings'), where('customerUid', '==', uid));
+  return onSnapshot(
+    q,
+    (snapshot) =>
+      onChange(
+        snapshot.docs
+          .map((d) => toCustomerBooking(d.data()))
+          .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`)),
+      ),
+    onError,
+  );
 }
 
 /**
  * Cancels atomically: marks the booking cancelled and deletes its slot docs,
  * so the times free up for everyone at once. Only "booked" bookings can be cancelled.
- * `check` runs inside the transaction for caller-specific rules (phone match, past time).
+ * `check` runs inside the transaction for caller-specific rules (owner, past time).
  */
 async function cancelInTransaction(
   bookingId: string,
@@ -299,15 +403,16 @@ async function cancelInTransaction(
   });
 }
 
-/** Customer cancel: the phone must match, and the start time must not have passed. */
-export function cancelBooking(bookingCode: string, phone: string): Promise<void> {
+/** Customer cancel: it must be the signed-in customer's, and its start time must not have passed. */
+export function cancelMyBooking(bookingCode: string): Promise<void> {
+  const uid = auth.currentUser?.uid;
   return cancelInTransaction(bookingCode, (data) => {
-    if (!matches(data, phone)) throw new BookingNotFoundError();
+    if (!uid || !data || data.customerUid !== uid) throw new BookingNotFoundError();
     if (isPast(data.date, data.startTime)) throw new TimePassedError();
   });
 }
 
-/** Admin cancel: no phone check, and Eddy may cancel at any time. */
+/** Admin cancel: any booking, and Eddy may cancel at any time. */
 export function adminCancelBooking(bookingId: string): Promise<void> {
   return cancelInTransaction(bookingId, (data) => {
     if (!data) throw new BookingNotFoundError();
@@ -340,6 +445,7 @@ function toAdminBooking(id: string, data: DocumentData): AdminBooking {
     date: b.date,
     startTime: b.startTime,
     status: b.status,
+    customerEmail: b.customerEmail ?? null,
   };
 }
 
