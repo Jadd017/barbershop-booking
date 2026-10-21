@@ -3,13 +3,15 @@
  * Settings are still local fake data; bookings live in Firestore.
  *
  * Firestore layout:
- * - bookings/{autoId}: the full booking, including the customer's name and phone.
+ * - bookings/{bookingCode}: the full booking, including the customer's name and phone.
+ *   Using the code as the ID lets a customer fetch their own booking without listing others.
  * - slots/{date}_{HHMM}: one doc per taken 15-min slot, holding only bookingId and date,
  *   so the customer page can see which times are taken without reading anyone's details.
  */
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   runTransaction,
@@ -20,8 +22,10 @@ import { generateBookingCode } from '../lib/bookingCode';
 import { isPast, slotsNeeded } from '../lib/slots';
 import type {
   BookingRequest,
+  BookingStatus,
   ConfirmedBooking,
   DateKey,
+  ManagedBooking,
   Settings,
   TimeString,
 } from '../types';
@@ -51,6 +55,45 @@ export class TimePassedError extends Error {
     super('Time already passed');
     this.name = 'TimePassedError';
   }
+}
+
+/** Thrown when no booking matches the code and phone (deliberately doesn't say which). */
+export class BookingNotFoundError extends Error {
+  constructor() {
+    super('Booking not found');
+    this.name = 'BookingNotFoundError';
+  }
+}
+
+/** Thrown when cancelling a booking that is already cancelled. */
+export class AlreadyCancelledError extends Error {
+  constructor() {
+    super('Booking already cancelled');
+    this.name = 'AlreadyCancelledError';
+  }
+}
+
+/** Thrown when every generated code collided with an existing booking (astronomically unlikely). */
+class NoFreeCodeError extends Error {
+  constructor() {
+    super('Could not generate a unique booking code');
+    this.name = 'NoFreeCodeError';
+  }
+}
+
+const MAX_CODE_ATTEMPTS = 5;
+
+/** Shape of a document in the "bookings" collection. */
+interface BookingDoc {
+  name: string;
+  phone: string;
+  serviceId: string;
+  serviceName: string;
+  date: DateKey;
+  startTime: TimeString;
+  durationMinutes: number;
+  bookingCode: string;
+  status: BookingStatus;
 }
 
 /** "2026-10-22" + "12:30" → "2026-10-22_1230" */
@@ -91,18 +134,24 @@ export async function createBooking(request: BookingRequest): Promise<ConfirmedB
   const { name, phone, service, date, startTime } = request;
   if (isPast(date, startTime)) throw new TimePassedError();
 
-  const bookingRef = doc(collection(db, 'bookings'));
   const slotRefs = slotsNeeded(startTime, service.durationMinutes).map((time) =>
     doc(db, 'slots', slotId(date, time)),
   );
-  const bookingCode = generateBookingCode();
 
-  await runTransaction(db, async (tx) => {
+  const bookingCode = await runTransaction(db, async (tx) => {
     // Firestore requires all reads before any writes in a transaction.
     const existing = await Promise.all(slotRefs.map((ref) => tx.get(ref)));
     if (existing.some((snap) => snap.exists())) throw new SlotTakenError();
 
-    tx.set(bookingRef, {
+    // The code is the document ID, so pick one that isn't used yet.
+    let code: string | null = null;
+    for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS && !code; attempt++) {
+      const candidate = generateBookingCode();
+      if (!(await tx.get(doc(db, 'bookings', candidate))).exists()) code = candidate;
+    }
+    if (!code) throw new NoFreeCodeError();
+
+    tx.set(doc(db, 'bookings', code), {
       name,
       phone,
       serviceId: service.id,
@@ -110,21 +159,72 @@ export async function createBooking(request: BookingRequest): Promise<ConfirmedB
       date,
       startTime,
       durationMinutes: service.durationMinutes,
-      bookingCode,
+      bookingCode: code,
       status: 'booked',
       createdAt: serverTimestamp(),
     });
     for (const ref of slotRefs) {
-      tx.set(ref, { bookingId: bookingRef.id, date });
+      tx.set(ref, { bookingId: code, date });
     }
+    return code;
   });
 
   return {
-    id: bookingRef.id,
     bookingCode,
+    name,
     serviceName: service.name,
     durationMinutes: service.durationMinutes,
     date,
     startTime,
   };
+}
+
+/** True if the booking exists and was made with this phone. */
+function matches(data: BookingDoc | undefined, phone: string): data is BookingDoc {
+  return data !== undefined && data.phone === phone;
+}
+
+/**
+ * Fetches a booking by its code, only if `phone` (normalized) matches.
+ * Throws BookingNotFoundError for a wrong code or a wrong phone alike.
+ */
+export async function findBooking(bookingCode: string, phone: string): Promise<ManagedBooking> {
+  const snap = await getDoc(doc(db, 'bookings', bookingCode));
+  const data = snap.data() as BookingDoc | undefined;
+  if (!matches(data, phone)) throw new BookingNotFoundError();
+
+  return {
+    bookingCode,
+    serviceName: data.serviceName,
+    durationMinutes: data.durationMinutes,
+    date: data.date,
+    startTime: data.startTime,
+    status: data.status,
+  };
+}
+
+/**
+ * Cancels atomically: marks the booking cancelled and deletes its slot docs,
+ * so the times free up for everyone at once. Refuses past or already-cancelled bookings.
+ */
+export async function cancelBooking(bookingCode: string, phone: string): Promise<void> {
+  const bookingRef = doc(db, 'bookings', bookingCode);
+
+  await runTransaction(db, async (tx) => {
+    const data = (await tx.get(bookingRef)).data() as BookingDoc | undefined;
+    if (!matches(data, phone)) throw new BookingNotFoundError();
+    if (data.status === 'cancelled') throw new AlreadyCancelledError();
+    if (isPast(data.date, data.startTime)) throw new TimePassedError();
+
+    const slotRefs = slotsNeeded(data.startTime, data.durationMinutes).map((time) =>
+      doc(db, 'slots', slotId(data.date, time)),
+    );
+    const slots = await Promise.all(slotRefs.map((ref) => tx.get(ref)));
+
+    tx.update(bookingRef, { status: 'cancelled', cancelledAt: serverTimestamp() });
+    // Only delete slots that still belong to this booking.
+    for (const slot of slots) {
+      if (slot.get('bookingId') === bookingCode) tx.delete(slot.ref);
+    }
+  });
 }

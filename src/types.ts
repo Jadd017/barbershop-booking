@@ -34,12 +34,24 @@ export interface BookingRequest {
 
 /** Shown on the confirmation screen. */
 export interface ConfirmedBooking {
-  id: string;
+  bookingCode: string;
+  name: string;
+  serviceName: string;
+  durationMinutes: number;
+  date: DateKey;
+  startTime: TimeString;
+}
+
+export type BookingStatus = 'booked' | 'cancelled';
+
+/** Shown on the manage page once the code and phone match. */
+export interface ManagedBooking {
   bookingCode: string;
   serviceName: string;
   durationMinutes: number;
   date: DateKey;
   startTime: TimeString;
+  status: BookingStatus;
 }
 
 export interface StartTimeOption {
