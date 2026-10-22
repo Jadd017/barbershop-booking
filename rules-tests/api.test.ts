@@ -48,9 +48,9 @@ const TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TIME_ZONE }).for
 const TOMORROW = addDays(TODAY, 1);
 const PHONE = '+96170123456';
 const OTHER_PHONE = '+9613123456';
-const RAMI = { uid: 'rami-uid', email: 'rami@gmail.com' };
-const SARA = { uid: 'sara-uid', email: 'sara@gmail.com' };
-const NADIM = { uid: 'nadim-uid', email: 'nadim@gmail.com' };
+const RAMI = { uid: 'rami-uid', email: 'rami@example.com' };
+const SARA = { uid: 'sara-uid', email: 'sara@example.com' };
+const NADIM = { uid: 'nadim-uid', email: 'nadim@example.com' };
 
 let env: RulesTestEnvironment;
 

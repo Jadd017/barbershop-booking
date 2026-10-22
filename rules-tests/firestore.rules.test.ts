@@ -43,9 +43,9 @@ const PHONE = '+96170123456';
 const OTHER_PHONE = '+9613123456';
 
 /** Google customers. */
-const RAMI = { uid: 'rami-uid', email: 'rami@gmail.com' };
-const SARA = { uid: 'sara-uid', email: 'sara@gmail.com' };
-const NADIM = { uid: 'nadim-uid', email: 'nadim@gmail.com' };
+const RAMI = { uid: 'rami-uid', email: 'rami@example.com' };
+const SARA = { uid: 'sara-uid', email: 'sara@example.com' };
+const NADIM = { uid: 'nadim-uid', email: 'nadim@example.com' };
 type CustomerInfo = typeof RAMI;
 
 /** Today's date in Beirut, whatever time zone the tests run in. */
@@ -317,7 +317,7 @@ describe('creating bookings', () => {
 
   it("refused with someone else's UID or email", async () => {
     await assertFails(book(sara()));
-    await assertFails(book(rami(), { fields: { customerEmail: 'other@gmail.com' } }));
+    await assertFails(book(rami(), { fields: { customerEmail: 'other@example.com' } }));
     await assertFails(book(rami(), { fields: { customerUid: null } }));
   });
 
@@ -732,7 +732,7 @@ describe('customer profiles (pre-filled name and phone)', () => {
     await assertFails(setDoc(ref(), { ...profile(), name: 'R' }));
     await assertFails(setDoc(ref(), { ...profile(), phone: '70123456' }));
     await assertFails(setDoc(ref(), { ...profile(), updatedAt: Timestamp.now() }));
-    await assertFails(setDoc(ref(), { ...profile(), email: 'x@gmail.com' }));
+    await assertFails(setDoc(ref(), { ...profile(), email: 'x@example.com' }));
     await assertFails(setDoc(ref(), { name: 'Rami', phone: PHONE }));
   });
 });
@@ -749,7 +749,7 @@ describe('Eddy (admin)', () => {
   const eddyViaGoogle = () =>
     env
       .authenticatedContext(ADMIN_UID, {
-        email: 'eddy@gmail.com',
+        email: 'eddy@example.com',
         firebase: { sign_in_provider: 'google.com' },
       })
       .firestore() as unknown as Firestore;

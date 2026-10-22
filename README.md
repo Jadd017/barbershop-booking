@@ -1,189 +1,136 @@
-# Barbershop Booking
+# Eddy's Barbershop — Online Booking
 
-Booking site for a one-barber shop (Eddy). Customers pick a service, a day and a free start time, then sign in with Google to book.
+A real booking system built for a working one-chair barbershop in Beirut. Customers pick a
+service, a day and a free time on their phone, sign in with Google, and send the booking to the
+barber on WhatsApp; the barber runs his day from a mobile dashboard: who's up next, walk-ins,
+opening hours, prices and days off. Every rule (no double bookings, opening hours, booking
+limits) is enforced on the server by Firestore security rules, not just in the browser.
 
-## Stack
+**Live:** [eddy-barbershop.web.app](https://eddy-barbershop.web.app)
 
-React + Vite + TypeScript, Tailwind CSS, Firebase (Firestore, Auth, Hosting, App Check).
-Mobile-first.
+## Screenshots
 
-## Look
+<p>
+  <img src="docs/screenshots/booking.png" alt="Booking page: services with prices" width="260">
+  <img src="docs/screenshots/booking-time-selected.png" alt="Day and time picked, with the booking summary bar" width="260">
+  <img src="docs/screenshots/confirmation.png" alt="Confirmation ticket with booking code and WhatsApp button" width="260">
+</p>
 
-Classic barbershop: charcoal, cream and brass, with a red/cream/blue barber-pole stripe on the
-customer pages. The colors are Tailwind theme tokens in `src/index.css` (`bg-charcoal`,
-`text-brass-light`, …), along with the `caps` utility (Oswald, uppercase, spaced) for headings
-and labels. Oswald is self-hosted through `@fontsource/oswald`, so it loads from the site itself
-and fits the Content-Security-Policy; icons come from `lucide-react`. Shared buttons, notices and
-status chips are in `src/components/ui.tsx`.
+<!-- Barber's dashboard:
+<p>
+  <img src="docs/screenshots/admin-today.png" alt="Barber's dashboard: today, up next" width="260">
+  <img src="docs/screenshots/admin-calendar.png" alt="Calendar view of a day" width="260">
+  <img src="docs/screenshots/admin-walk-in.png" alt="Adding a walk-in" width="260">
+  <img src="docs/screenshots/admin-settings.png" alt="Settings: hours, services and prices" width="260">
+</p>
+-->
 
-Contrast: brass is only a fill or border on light backgrounds (as text it's under 3:1 there) and
-a text color on charcoal; small muted text on cream uses `muted-strong` (#73685D) because #7A6F64
-is just under 4.5:1 on cream; the WhatsApp button's white text is 24px. Buttons are at least
-44px tall.
+## Features
 
-## Run
+**For customers**
 
-```bash
-npm install
-npm run dev      # http://localhost:5173
-npm run build    # type-check + production build
-```
+- Services with duration and price, days within the booking window (closed days shown but not
+  selectable), and start times grouped by morning, afternoon and evening.
+- Live availability: times update in real time as other people book, and times that don't
+  leave enough room for the chosen service are faded out.
+- Google sign-in, then name and phone (remembered for next time).
+- A confirmation "ticket" with a booking code, a pre-filled WhatsApp message to the barber, and
+  directions to the shop.
+- "My bookings" to see past and upcoming bookings and cancel before the appointment.
 
-## Structure
+**For the barber**
 
-```
-src/
-  config.ts          SLOT_MINUTES, limits shared with firestore.rules
-  types.ts           Shared types (Settings, Service, Booking)
-  data/
-    api.ts           The only data entry point for the UI (Firestore)
-  lib/
-    schedule.ts      Hours, breaks, days off and the booking window from the settings
-    settingsDoc.ts   settings/shop as stored in Firestore, and its defaults
-    slots.ts         Availability logic (15-min grid, hours, breaks, taken/blocked slots)
-    shop.ts          Prices and the (https-only) directions link
-    time.ts          Time/date helpers
-  components/        Customer pages' parts; ui.tsx holds the shared look
-    admin/           Eddy's dashboard (Today, Calendar, Walk-in), settings, login
-  pages/             BookingPage, MyBookingsPage, AdminPage
-```
+- A "Today" dashboard: bookings, done and free-slot counts, the next customer with one-tap
+  Done / No-show, call and WhatsApp links, and the rest of the day including breaks and blocked
+  times.
+- A calendar view of any day, and walk-in or phone bookings that go through the same
+  double-booking checks as online ones.
+- Settings: weekly hours with breaks, services with prices, booking window, holiday periods with
+  a longer window, days off, blocked times, shop address and Maps link. Changes show up live on
+  the booking page, and bookings that would clash with new hours are listed for him to handle;
+  nothing is ever cancelled automatically.
 
-## Customer sign-in (Google)
+## Tech stack
 
-Browsing is open to everyone; pressing **Confirm** asks the customer to sign in with Google,
-then shows the name/phone form with their choice kept. `src/data/auth.ts` opens a Google popup
-(which also works in mobile Safari and Chrome, as a new tab) and falls back to a full-page
-redirect where popups can't open, e.g. a home-screen app. The choice is saved in session
-storage first so it survives the redirect.
+- **Frontend:** React, TypeScript, Vite, Tailwind CSS (mobile-first), lucide icons, self-hosted
+  Oswald font
+- **Backend:** Firebase: Cloud Firestore (real-time data + security rules), Authentication
+  (Google for customers, email/password for the barber), Hosting, App Check (reCAPTCHA
+  Enterprise)
+- **Testing:** Vitest, Firebase Local Emulator Suite, `@firebase/rules-unit-testing`
 
-For the redirect fallback to work in Safari, Chrome and Firefox (which block third-party
-storage), `VITE_FIREBASE_AUTH_DOMAIN` must be the domain the site is served from. On Firebase
-Hosting that's automatic once it's set to that domain (e.g. `eddy-barbershop.web.app` or a
-custom domain); elsewhere `/__/auth/*` needs to be proxied to `<project>.firebaseapp.com`.
-Every domain the site runs on must also be listed under Authentication → Settings →
-Authorized domains. Google refuses sign-in inside in-app browsers (Instagram, Facebook, …);
-the page tells those visitors to open it in Chrome or Safari.
+## How it works
 
-Eddy's `/admin` login stays email/password. His account isn't a Google one, so it never counts
-as a customer, and a Google customer who opens `/admin` sees "Not authorized".
+**No double bookings, even under concurrent requests.** The day is a grid of 15-minute slots,
+and every taken slot is its own Firestore document (`slots/{date}_{HHMM}`). A booking is one
+transaction that creates the booking and every slot document it covers. The rules only allow
+slots to be *created*, never overwritten, so if two people grab the same time at once, one
+transaction fails and nothing partial is written. Times the barber blocks are slot documents too.
 
-## Settings (Eddy)
+**All rules enforced server-side.** The page checks everything for a good experience, but the
+Firestore security rules are what count. A customer booking must match the current settings:
+an existing service with its exact name and length, within that weekday's hours, clear of
+breaks and days off, in the future, inside the booking window (or a holiday period's), with
+only the expected fields. Customers can only see their own bookings, and cancel them only before
+they start. Saved customer details are readable only by their owner and the barber.
 
-`/admin/settings` (**Settings** in the bottom bar of Eddy's pages) edits `settings/shop`, which the
-booking page reads live: weekly hours with up to 2 breaks a day (or closed), services
-(15–60 min, with an optional price shown to customers), the shop's address and Google Maps
-link (for "Get directions" after booking), how many days ahead customers can book, up to 4 special periods (while today is
-between their dates, customers can book their own number of days ahead), and days off.
-Changes are saved together with **Save changes**.
+**Rules tuned to Firestore's limits.** Firestore stops evaluating a write after 1,000
+expressions and 10 document reads, and a customer booking is the heaviest write. Settings are
+stored in the shape that's cheapest to check (times as minutes, dates as day numbers, services
+as a map keyed by ID), and shared values are computed once and passed down. A test builds the
+worst-case booking and also re-runs it against padded copies of the rules, to prove it keeps
+about 15% of the expression budget spare.
 
-**Blocked times** (a time range on one day) are saved straight away as slot docs marked
-`blocked`, so they count as taken everywhere. Times already booked are left to their bookings.
+**Google sign-in with per-account limits.** Each Google account and each phone number can hold
+at most 2 upcoming bookings, enforced with "seat" documents the rules check in the same
+transaction, so the calendar can't be filled from one account. The barber's account is a
+separate email/password login, and admin rights require both his account ID and that sign-in
+method.
 
-Nothing on the settings page cancels bookings. Upcoming bookings on a closed day, a day off,
-outside the hours or in a break are listed at the top (and in the blocking form) with a Cancel
-button, and saving changes that create new clashes asks for confirmation first.
+**Hardened hosting.** A strict Content-Security-Policy (only the site's own scripts plus Google
+sign-in and reCAPTCHA), HSTS, `frame-ancestors` / X-Frame-Options, `nosniff`, Referrer-Policy
+and Permissions-Policy, set in `firebase.json`. App Check limits the database to the real
+website, and user-provided links (the Maps link) must be `https://`.
 
-`settings/shop` is created with the defaults in `src/lib/settingsDoc.ts` (10:00–20:00 every day,
-break 14:00–15:00, Haircut 30 min $10 / Beard 15 min $5 / Haircut + Beard 45 min $13, 4 days
-ahead) the first time Eddy
-opens `/admin`. Until then the booking page says booking opens soon.
+**Time zones.** Bookings are in the shop's time (Asia/Beirut, with daylight saving), whatever
+the visitor's device says, and the rules check each booking's start instant against it.
 
-## Firestore security rules
-
-`firestore.rules` enforces everything on the server (the page's checks are only for UX):
-
-- Customer bookings must come from a Google sign-in and carry that account's UID and email.
-  Customers can only read, list and cancel (before the start time) their own bookings;
-  only Eddy can see all of them. Walk-ins Eddy adds have no customer UID.
-- Each Google account and each phone can hold at most 2 upcoming bookings
-  (via `userLimits/{uid}_{1|2}` and `phoneLimits/{phone}_{1|2}` "seats").
-- Bookings are fully validated and must claim their slots in the same transaction.
-- Customer bookings must match `settings/shop`: an existing service with its current name and
-  length, within that weekday's hours, clear of its breaks, not on a closed day or day off, and
-  within the booking window (or a special period's window while it's on).
-- Eddy's walk-ins skip the window and hours but still claim their slots, so they can't
-  double-book. Eddy can only change a booking's status, not move it or revive a cancelled one.
-- Anyone can read `settings/shop`; only Eddy can write it, and its shape is checked. The Maps
-  link must be `https://` (it's put in a link, so never `javascript:`) and the address at most
-  200 characters; both are optional so older settings still save. Prices sit inside each
-  service and are only ever displayed: bookings don't store or depend on them.
-- Blocked times are slot docs only Eddy can create or delete.
-- `customers/{uid}` keeps the last name and phone for pre-filling; only that customer and Eddy can
-  read it, only that customer can write it, and nobody can list or delete them.
-- Eddy is his UID *and* an email/password sign-in: if Google were ever linked to his account,
-  that sign-in gets no admin rights.
-
-`ADMIN_UID` and the limits in `src/config.ts` (60-min services, 2 breaks a day, 4 special
-periods, 60-day window) are copied into the rules; keep them in sync.
-
-Firestore stops evaluating a write after 1000 expressions, and a customer booking uses a lot of
-them. That's why `settings/shop` stores times as minutes and special periods as day numbers, and
-why the rules compute shared values once. The "heaviest valid booking" tests measure the worst
-case at about 820 expressions and fail if a change eats into the remaining ~15%. The booking also
-reads up to 9 documents, against a limit of 10 per write that the emulator doesn't check, so
-don't add a `get()` to customer bookings.
+## Testing
 
 ```bash
-npm run test:rules   # rules + data layer tests in the Firestore emulator (needs Java 21+)
-firebase deploy --only firestore:rules
+npm test             # Vitest: slot grid, availability, schedule, time zone and phone logic
+npm run test:rules   # Firestore rules + data layer against the emulator (needs Java 21+)
 ```
 
-## Deploy (Firebase Hosting)
+The rules suite (150+ tests) covers double booking, overlapping times, booking limits,
+cancelling, every settings check, who can read what, and the rules-limit margins above.
 
-```bash
-npm run deploy   # production build, then firebase deploy --only hosting,firestore:rules
-```
+## Running locally
 
-The site is served from `dist` at https://eddy-barbershop.web.app. Every path (`/admin`,
-`/my-bookings`, …) falls back to `index.html` so the router handles it. The Firestore rules go
-out in the same command so they always match the code.
+Requirements: Node.js 22+, the [Firebase CLI](https://firebase.google.com/docs/cli)
+(`npm i -g firebase-tools`), and Java 21+ for the emulator.
 
-- **Auth domain:** `.env.production` sets `VITE_FIREBASE_AUTH_DOMAIN=eddy-barbershop.web.app` for
-  builds, overriding `.env.local`. Google's redirect sign-in then stays on the site's own domain,
-  which mobile browsers need. `npm run dev` keeps the `.env.local` value.
-- **Caching:** files in `/assets` have a content hash in their name, so they're cached for a year.
-  `index.html`, the app's routes and the favicon are sent with `no-cache` (always revalidated),
-  so the next visit after a deploy loads the new version.
+1. Create a Firebase project with Firestore, and enable **Google** and **Email/Password**
+   sign-in under Authentication.
+2. Copy `.env.example` to `.env.local` and fill in your project's web app config and the
+   barber's WhatsApp number (`.env.local` is git-ignored). For production builds, also set
+   `VITE_FIREBASE_AUTH_DOMAIN` in `.env.production` to the domain you host the site on.
+3. Create the barber's email/password user and put its UID in `ADMIN_UID` in `src/config.ts`
+   and in `isAdmin()` in `firestore.rules`.
+4. Install and run:
 
-- **Security headers** (`firebase.json`, every path): a Content-Security-Policy that allows only
-  this site's own scripts plus Google's sign-in helper (`apis.google.com`) and reCAPTCHA, and
-  only Firebase's APIs for requests; `frame-ancestors 'self'` and `X-Frame-Options` so other
-  sites can't frame the page; `nosniff`, `Referrer-Policy`, HSTS and a `Permissions-Policy`.
-  Hosting doesn't add them to its own `/__/auth/*` pages, so they can't break Google sign-in.
-  If something new is blocked, the browser console says which directive to extend.
+   ```bash
+   npm install
+   firebase use --add            # pick your project
+   firebase deploy --only firestore:rules
+   npm run dev                   # http://localhost:5173
+   ```
 
-`npx firebase emulators:start --only hosting` serves `dist` at http://127.0.0.1:5050 with the
-same rewrites. The emulator doesn't apply the cache or security headers.
+5. Sign in at `/admin` once: that creates the default settings, and the booking page opens.
 
-## App Check
+App Check is optional and off until `VITE_RECAPTCHA_ENTERPRISE_KEY` is set. Setup, deployment
+and the details of every rule are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-`src/data/firebase.ts` starts [App Check](https://firebase.google.com/docs/app-check) with
-reCAPTCHA Enterprise (free up to 10,000 checks a month, far above this site's traffic): each
-visitor's browser gets a token proving it's running this site, and once enforcement is on,
-Firestore refuses requests without one. Scripts that copy the public API key get nothing.
-It's off while `VITE_RECAPTCHA_ENTERPRISE_KEY` is empty.
+## License
 
-Setup, in this order:
-
-1. **Google Cloud console** (project `eddy-barbershop`) → search "reCAPTCHA" → enable the API if
-   asked → **Create key**: type **Website**, domains `eddy-barbershop.web.app` and
-   `eddy-barbershop.firebaseapp.com` (not `localhost`), **Use checkbox challenge off**.
-   Copy the key ID.
-2. **Firebase console** → **App Check** → **Apps** → the web app → **reCAPTCHA Enterprise** →
-   paste the key → **Save**.
-3. Put the key in `.env.production` and `.env.local` as `VITE_RECAPTCHA_ENTERPRISE_KEY`.
-4. **Localhost:** App Check → Apps → ⋮ next to the web app → **Manage debug tokens** → **Add** →
-   **Generate**, then put it in `.env.local` as `VITE_APPCHECK_DEBUG_TOKEN` and restart
-   `npm run dev`. It's a secret; never commit it. Only `npm run dev` uses it.
-5. Deploy, then use the live site (book, cancel, Eddy's dashboard and settings) on a phone and a
-   computer. Under App Check → **APIs** → **Cloud Firestore**, requests should show as verified.
-6. Only then: App Check → APIs → Cloud Firestore → **Enforce**. It takes effect within ~15 min;
-   **Unenforce** undoes it.
-
-## Browser API key
-
-The `VITE_FIREBASE_API_KEY` is public by design (it's in the page); the rules and App Check are
-what protect the data. Still, restrict it: Google Cloud console → **APIs & Services** →
-**Credentials** → the "Browser key (auto created by Firebase)" → **Application restrictions:
-Websites** → `https://eddy-barbershop.web.app/*`, `https://eddy-barbershop.firebaseapp.com/*`,
-`http://localhost:5173/*` → **Save**.
+[MIT](LICENSE)

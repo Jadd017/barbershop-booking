@@ -1,8 +1,11 @@
 /** Size of one time slot on the booking grid, in minutes. */
 export const SLOT_MINUTES = 15;
 
-/** Eddy's WhatsApp number, in international format. */
-export const BARBER_WHATSAPP = '+96176139388';
+/**
+ * Eddy's WhatsApp number in international format, e.g. "+96170123456". From .env.local, so the
+ * real number isn't in the repo (main.tsx refuses to start without it).
+ */
+export const BARBER_WHATSAPP: string = import.meta.env.VITE_BARBER_WHATSAPP ?? '';
 
 /** Firebase Auth UID of the only user allowed into /admin (Eddy). */
 export const ADMIN_UID = 'HHBoRoG4jphMLu2OjKpYTGJTKd42';

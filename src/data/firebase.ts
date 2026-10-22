@@ -24,7 +24,7 @@ if (missing.length > 0) {
 const app = initializeApp(firebaseConfig);
 
 // App Check proves requests come from this site (via reCAPTCHA), not a script using the API key.
-// Must start before Firestore is used. See README, "App Check".
+// Must start before Firestore is used. See docs/DEVELOPMENT.md, "App Check".
 const recaptchaKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_KEY;
 if (recaptchaKey) {
   if (import.meta.env.DEV) {
