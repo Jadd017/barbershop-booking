@@ -1,6 +1,6 @@
 # Eddy's Barbershop — Online Booking
 
-A real booking system built for a working one-chair barbershop in Beirut. Customers pick a
+A real booking system built for a working one-chair barbershop in Zgharta. Customers pick a
 service, a day and a free time on their phone, sign in with Google, and send the booking to the
 barber on WhatsApp; the barber runs his day from a mobile dashboard: who's up next, walk-ins,
 opening hours, prices and days off. Every rule (no double bookings, opening hours, booking
