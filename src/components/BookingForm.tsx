@@ -15,8 +15,10 @@ import {
   TooManyBookingsError,
 } from '../data/api';
 import { formatLebanesePhone, normalizeLebanesePhone } from '../lib/phone';
+import { formatPrice } from '../lib/shop';
 import { formatDayLong } from '../lib/time';
 import type { ConfirmedBooking, DateKey, Service, TimeString } from '../types';
+import { buttonBrass, buttonOutline, inputBase, Notice } from './ui';
 
 interface Props {
   /** The signed-in Google customer the booking is for. */
@@ -105,20 +107,25 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-end justify-center bg-black/40 sm:items-center">
+    <div className="fixed inset-0 z-20 flex items-end justify-center bg-charcoal/60 sm:items-center">
       <form
         onSubmit={handleSubmit}
         noValidate
-        className="w-full max-w-xl rounded-t-2xl bg-white p-6 sm:rounded-2xl"
+        aria-labelledby="details-title"
+        className="max-h-full w-full max-w-xl overflow-y-auto rounded-t-3xl bg-cream p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:rounded-3xl"
       >
-        <h2 className="text-lg font-bold">Your details</h2>
-        <p className="text-sm text-neutral-600">
-          {service.name} · {formatDayLong(date)} at {startTime}
+        <h2 id="details-title" className="caps text-xl font-semibold">
+          Your details
+        </h2>
+        <p className="mt-1 text-sm text-ink">
+          {service.name}
+          {service.price !== undefined && ` · ${formatPrice(service.price)}`} · {formatDayLong(date)}{' '}
+          at {startTime}
         </p>
-        <p className="mb-5 break-all text-sm text-neutral-500">Booking as {customer.email}</p>
+        <p className="mb-5 break-all text-sm text-muted-strong">Booking as {customer.email}</p>
 
         <label className="mb-4 block">
-          <span className="mb-1 block text-sm font-medium">Name</span>
+          <span className="caps mb-1 block text-xs font-semibold">Name</span>
           <input
             type="text"
             autoComplete="name"
@@ -126,13 +133,13 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={submitting || slotLost}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3 outline-none focus:border-neutral-900"
+            className={`${inputBase} w-full`}
           />
-          {nameError && <span className="mt-1 block text-sm text-red-600">{nameError}</span>}
+          {nameError && <span className="mt-1 block text-sm text-pole-red">{nameError}</span>}
         </label>
 
         <label className="mb-6 block">
-          <span className="mb-1 block text-sm font-medium">Phone</span>
+          <span className="caps mb-1 block text-xs font-semibold">Phone</span>
           <input
             type="tel"
             inputMode="tel"
@@ -141,15 +148,15 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             disabled={submitting || slotLost}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3 tabular-nums outline-none focus:border-neutral-900"
+            className={`${inputBase} w-full tabular-nums`}
           />
-          {phoneError && <span className="mt-1 block text-sm text-red-600">{phoneError}</span>}
+          {phoneError && <span className="mt-1 block text-sm text-pole-red">{phoneError}</span>}
         </label>
 
         {submitError && (
-          <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+          <Notice tone="error" className="mb-4">
             {submitError}
-          </p>
+          </Notice>
         )}
 
         <div className="flex gap-3">
@@ -157,16 +164,12 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
             type="button"
             onClick={onCancel}
             disabled={submitting}
-            className="flex-1 rounded-xl border border-neutral-300 px-5 py-3 font-semibold hover:border-neutral-500"
+            className={`${buttonOutline} flex-1`}
           >
             {slotLost ? 'Pick another time' : 'Back'}
           </button>
           {!slotLost && (
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex-1 rounded-xl bg-neutral-900 px-5 py-3 font-semibold text-white hover:bg-neutral-700 disabled:opacity-60"
-            >
+            <button type="submit" disabled={submitting} className={`${buttonBrass} caps flex-1`}>
               {submitting ? 'Booking…' : 'Book'}
             </button>
           )}

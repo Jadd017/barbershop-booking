@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Settings } from '../types';
-import { bookableDays, bookingWindowOn, fitsHours, settingsErrors, weeklyHoursSummary } from './schedule';
+import {
+  bookableDays,
+  bookingWindowOn,
+  fitsHours,
+  settingsErrors,
+  weeklyHoursSummary,
+  windowDays,
+} from './schedule';
 import { DEFAULT_SETTINGS } from './settingsDoc';
 
 const base: Settings = DEFAULT_SETTINGS;
@@ -28,6 +35,17 @@ describe('bookingWindowOn / bookableDays', () => {
     expect(bookingWindowOn(s, '2026-12-15')).toBe(10);
     expect(bookingWindowOn(s, '2026-12-31')).toBe(10);
     expect(bookingWindowOn(s, '2027-01-01')).toBe(4);
+  });
+
+  it('windowDays lists the closed days too, and its open days are bookableDays', () => {
+    const s: Settings = { ...base, daysOff: ['2026-10-23'] };
+    expect(windowDays(s, NOW)).toEqual([
+      { date: '2026-10-22', open: true },
+      { date: '2026-10-23', open: false },
+      { date: '2026-10-24', open: true },
+      { date: '2026-10-25', open: true },
+    ]);
+    expect(windowDays(s, NOW).filter((d) => d.open).map((d) => d.date)).toEqual(bookableDays(s, NOW));
   });
 
   it('never shortens the normal window', () => {
@@ -109,5 +127,28 @@ describe('settingsErrors', () => {
       'Every special period needs a name.',
       'Special period: the end date must be on or after the start date.',
     ]);
+  });
+
+  it('accepts prices in whole cents up to $1000, or none', () => {
+    const withPrice = (price: number | undefined) =>
+      settingsErrors({ ...base, services: [{ ...base.services[0], price }] });
+    expect(withPrice(undefined)).toEqual([]);
+    expect(withPrice(0)).toEqual([]);
+    expect(withPrice(12.5)).toEqual([]);
+    expect(withPrice(1000)).toEqual([]);
+    expect(withPrice(-1)).toHaveLength(1);
+    expect(withPrice(1001)).toHaveLength(1);
+    expect(withPrice(12.555)).toHaveLength(1);
+    expect(withPrice(NaN)).toHaveLength(1);
+  });
+
+  it('accepts only an https maps link, and a short enough address', () => {
+    const shop = (mapsUrl: string, shopAddress = '') => settingsErrors({ ...base, mapsUrl, shopAddress });
+    expect(shop('')).toEqual([]);
+    expect(shop('https://maps.app.goo.gl/abc123', 'Hamra Street, Beirut')).toEqual([]);
+    expect(shop('javascript:alert(1)')).toHaveLength(1);
+    expect(shop('http://maps.google.com')).toHaveLength(1);
+    expect(shop('https://maps.google.com/a b')).toHaveLength(1);
+    expect(shop('', 'x'.repeat(201))).toHaveLength(1);
   });
 });

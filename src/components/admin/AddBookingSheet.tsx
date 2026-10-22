@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { MAX_NAME_LENGTH } from '../../config';
 import { createBooking, SlotTakenError, TimePassedError } from '../../data/api';
@@ -7,6 +8,7 @@ import { toDateKey } from '../../lib/time';
 import type { DateKey, Settings, TimeString } from '../../types';
 import { ServicePicker } from '../ServicePicker';
 import { TimeGrid } from '../TimeGrid';
+import { buttonBrass, inputBase, Notice, StepLabel } from '../ui';
 
 interface Props {
   settings: Settings;
@@ -72,103 +74,120 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
   }
 
   return (
-    <div className="fixed inset-0 z-20 overflow-y-auto bg-white">
-      <form onSubmit={handleSubmit} noValidate className="mx-auto max-w-xl px-4 pb-32 pt-6">
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-xl font-bold">Add booking</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-neutral-600 underline"
-          >
-            Close
-          </button>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="walk-in-title"
+      className="fixed inset-0 z-30 overflow-y-auto bg-cream"
+    >
+      <form onSubmit={handleSubmit} noValidate>
+        <header className="sticky top-0 z-10 bg-charcoal text-cream">
+          <div className="mx-auto flex max-w-xl items-center justify-between px-4 py-3">
+            <h2 id="walk-in-title" className="caps text-2xl font-semibold tracking-[0.1em]">
+              Walk-in
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="inline-flex min-h-11 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
+            >
+              <X aria-hidden size={18} />
+              Close
+            </button>
+          </div>
+        </header>
+
+        <div className="mx-auto max-w-xl px-4 pb-32 pt-5">
+          <section className="mb-6">
+            <StepLabel step={1}>Service</StepLabel>
+            <ServicePicker
+              services={settings.services}
+              selectedId={serviceId}
+              onSelect={(id) => {
+                setServiceId(id);
+                setTime(null);
+              }}
+            />
+          </section>
+
+          <section className="mb-6">
+            <StepLabel step={2}>Day</StepLabel>
+            <input
+              type="date"
+              aria-label="Day"
+              min={today}
+              value={day}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setDay(e.target.value);
+                  setTime(null);
+                }
+              }}
+              className={`${inputBase} w-full`}
+            />
+          </section>
+
+          {service && (
+            <section className="mb-6">
+              <StepLabel step={3}>Time</StepLabel>
+              {slotsError ? (
+                <Notice tone="error">Couldn't load times. Check your connection.</Notice>
+              ) : startTimes ? (
+                <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
+              ) : (
+                <p className="text-sm text-muted-strong">Loading times…</p>
+              )}
+            </section>
+          )}
+
+          <label className="mb-4 block">
+            <span className="caps mb-1 block text-xs font-semibold">Name</span>
+            <input
+              type="text"
+              autoComplete="off"
+              maxLength={MAX_NAME_LENGTH}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={saving}
+              className={`${inputBase} w-full`}
+            />
+          </label>
+
+          <label className="mb-6 block">
+            <span className="caps mb-1 block text-xs font-semibold">
+              Phone <span className="font-normal normal-case tracking-normal text-muted-strong">(optional)</span>
+            </span>
+            <input
+              type="tel"
+              inputMode="tel"
+              autoComplete="off"
+              placeholder="+961 70 123 456"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={saving}
+              className={`${inputBase} w-full tabular-nums`}
+            />
+          </label>
+
+          {error && (
+            <Notice tone="error" className="mb-4">
+              {error}
+            </Notice>
+          )}
         </div>
 
-        <section className="mb-6">
-          <h3 className="mb-2 font-semibold">Service</h3>
-          <ServicePicker
-            services={settings.services}
-            selectedId={serviceId}
-            onSelect={(id) => {
-              setServiceId(id);
-              setTime(null);
-            }}
-          />
-        </section>
-
-        <section className="mb-6">
-          <h3 className="mb-2 font-semibold">Day</h3>
-          <input
-            type="date"
-            min={today}
-            value={day}
-            onChange={(e) => {
-              if (e.target.value) {
-                setDay(e.target.value);
-                setTime(null);
-              }
-            }}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3"
-          />
-        </section>
-
-        {service && (
-          <section className="mb-6">
-            <h3 className="mb-2 font-semibold">Time</h3>
-            {slotsError ? (
-              <p className="text-sm text-red-600">Couldn't load times. Check your connection.</p>
-            ) : startTimes ? (
-              <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
-            ) : (
-              <p className="text-sm text-neutral-500">Loading times…</p>
-            )}
-          </section>
-        )}
-
-        <label className="mb-4 block">
-          <span className="mb-1 block font-semibold">Name</span>
-          <input
-            type="text"
-            autoComplete="off"
-            maxLength={MAX_NAME_LENGTH}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={saving}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3 outline-none focus:border-neutral-900"
-          />
-        </label>
-
-        <label className="mb-6 block">
-          <span className="mb-1 block font-semibold">
-            Phone <span className="font-normal text-neutral-500">(optional)</span>
-          </span>
-          <input
-            type="tel"
-            inputMode="tel"
-            autoComplete="off"
-            placeholder="+961 70 123 456"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            disabled={saving}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3 tabular-nums outline-none focus:border-neutral-900"
-          />
-        </label>
-
-        {error && (
-          <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={saving || !selectedTime}
-          className="w-full rounded-xl bg-neutral-900 px-5 py-4 font-semibold text-white hover:bg-neutral-700 disabled:opacity-40"
-        >
-          {saving ? 'Saving…' : selectedTime ? `Add booking at ${selectedTime}` : 'Pick a time'}
-        </button>
+        <div className="fixed inset-x-0 bottom-0 border-t border-line bg-cream/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+          <div className="mx-auto max-w-xl px-4 py-3">
+            <button
+              type="submit"
+              disabled={saving || !selectedTime}
+              className={`${buttonBrass} caps min-h-14 w-full text-base`}
+            >
+              {saving ? 'Saving…' : selectedTime ? `Add booking at ${selectedTime}` : 'Pick a time'}
+            </button>
+          </div>
+        </div>
       </form>
     </div>
   );

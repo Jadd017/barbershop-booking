@@ -307,6 +307,7 @@ function confirmed(request: BookingRequest, bookingCode: string): ConfirmedBooki
     durationMinutes: request.service.durationMinutes,
     date: request.date,
     startTime: request.startTime,
+    ...(request.service.price === undefined ? {} : { price: request.service.price }),
   };
 }
 

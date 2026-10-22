@@ -2,11 +2,24 @@
 
 Booking site for a one-barber shop (Eddy). Customers pick a service, a day and a free start time, then sign in with Google to book.
 
-**Phase 1:** UI only, running on fake data. Firebase (Firestore, Auth, Hosting) comes in phase 2.
-
 ## Stack
 
-React + Vite + TypeScript, Tailwind CSS. Mobile-first.
+React + Vite + TypeScript, Tailwind CSS, Firebase (Firestore, Auth, Hosting, App Check).
+Mobile-first.
+
+## Look
+
+Classic barbershop: charcoal, cream and brass, with a red/cream/blue barber-pole stripe on the
+customer pages. The colors are Tailwind theme tokens in `src/index.css` (`bg-charcoal`,
+`text-brass-light`, …), along with the `caps` utility (Oswald, uppercase, spaced) for headings
+and labels. Oswald is self-hosted through `@fontsource/oswald`, so it loads from the site itself
+and fits the Content-Security-Policy; icons come from `lucide-react`. Shared buttons, notices and
+status chips are in `src/components/ui.tsx`.
+
+Contrast: brass is only a fill or border on light backgrounds (as text it's under 3:1 there) and
+a text color on charcoal; small muted text on cream uses `muted-strong` (#73685D) because #7A6F64
+is just under 4.5:1 on cream; the WhatsApp button's white text is 24px. Buttons are at least
+44px tall.
 
 ## Run
 
@@ -28,12 +41,12 @@ src/
     schedule.ts      Hours, breaks, days off and the booking window from the settings
     settingsDoc.ts   settings/shop as stored in Firestore, and its defaults
     slots.ts         Availability logic (15-min grid, hours, breaks, taken/blocked slots)
+    shop.ts          Prices and the (https-only) directions link
     time.ts          Time/date helpers
-  components/        ServicePicker, DayPicker, TimeGrid
-  App.tsx            Booking page
+  components/        Customer pages' parts; ui.tsx holds the shared look
+    admin/           Eddy's dashboard (Today, Calendar, Walk-in), settings, login
+  pages/             BookingPage, MyBookingsPage, AdminPage
 ```
-
-To switch to Firestore in phase 2, re-implement the functions in `src/data/api.ts` and keep their signatures.
 
 ## Customer sign-in (Google)
 
@@ -56,9 +69,10 @@ as a customer, and a Google customer who opens `/admin` sees "Not authorized".
 
 ## Settings (Eddy)
 
-`/admin/settings` (the **Settings** link on the dashboard) edits `settings/shop`, which the
+`/admin/settings` (**Settings** in the bottom bar of Eddy's pages) edits `settings/shop`, which the
 booking page reads live: weekly hours with up to 2 breaks a day (or closed), services
-(15–60 min), how many days ahead customers can book, up to 4 special periods (while today is
+(15–60 min, with an optional price shown to customers), the shop's address and Google Maps
+link (for "Get directions" after booking), how many days ahead customers can book, up to 4 special periods (while today is
 between their dates, customers can book their own number of days ahead), and days off.
 Changes are saved together with **Save changes**.
 
@@ -70,7 +84,8 @@ outside the hours or in a break are listed at the top (and in the blocking form)
 button, and saving changes that create new clashes asks for confirmation first.
 
 `settings/shop` is created with the defaults in `src/lib/settingsDoc.ts` (10:00–20:00 every day,
-break 14:00–15:00, Haircut 30 / Beard 15 / Haircut + Beard 45, 4 days ahead) the first time Eddy
+break 14:00–15:00, Haircut 30 min $10 / Beard 15 min $5 / Haircut + Beard 45 min $13, 4 days
+ahead) the first time Eddy
 opens `/admin`. Until then the booking page says booking opens soon.
 
 ## Firestore security rules
@@ -88,7 +103,10 @@ opens `/admin`. Until then the booking page says booking opens soon.
   within the booking window (or a special period's window while it's on).
 - Eddy's walk-ins skip the window and hours but still claim their slots, so they can't
   double-book. Eddy can only change a booking's status, not move it or revive a cancelled one.
-- Anyone can read `settings/shop`; only Eddy can write it, and its shape is checked.
+- Anyone can read `settings/shop`; only Eddy can write it, and its shape is checked. The Maps
+  link must be `https://` (it's put in a link, so never `javascript:`) and the address at most
+  200 characters; both are optional so older settings still save. Prices sit inside each
+  service and are only ever displayed: bookings don't store or depend on them.
 - Blocked times are slot docs only Eddy can create or delete.
 - `customers/{uid}` keeps the last name and phone for pre-filling; only that customer and Eddy can
   read it, only that customer can write it, and nobody can list or delete them.

@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
 import { saveSettings, subscribeUpcomingBookings } from '../../../data/api';
 import { useSettings } from '../../../hooks/useSettings';
 import { fitsHours, settingsErrors } from '../../../lib/schedule';
 import { isPast } from '../../../lib/slots';
 import { toDateKey } from '../../../lib/time';
 import type { AdminBooking, Settings } from '../../../types';
+import { buttonDark, buttonOutline, PageMessage } from '../../ui';
+import { AdminHeader } from '../AdminHeader';
+import { AdminNav } from '../AdminNav';
 import { BookingCard } from '../BookingCard';
 import { BlockedTimes } from './BlockedTimes';
 import { DaysOffEditor } from './DaysOffEditor';
 import { HoursEditor } from './HoursEditor';
 import { ServicesEditor } from './ServicesEditor';
+import { ShopInfoEditor } from './ShopInfoEditor';
 import { WindowEditor } from './WindowEditor';
 
 /** True if `b` is still to come and falls on a closed day, outside the hours or in a break. */
@@ -23,8 +26,8 @@ function clashes(settings: Settings, b: AdminBooking): boolean {
 }
 
 /**
- * Eddy's settings. Hours, services, the booking window and days off are edited as a draft
- * and saved together; blocked times are saved straight away.
+ * Eddy's settings. Hours, services, the shop's details, the booking window and days off are
+ * edited as a draft and saved together; blocked times are saved straight away.
  *
  * Bookings that fall outside the hours or on a day off are listed so Eddy can cancel them.
  * Nothing here ever cancels or deletes a booking by itself.
@@ -45,14 +48,10 @@ export function SettingsPage({ onLogout }: { onLogout: () => void }) {
   );
 
   if (loadError) {
-    return (
-      <p className="p-6 text-center text-red-600">
-        Couldn't load settings. Check your connection and refresh.
-      </p>
-    );
+    return <PageMessage error>Couldn't load settings. Check your connection and refresh.</PageMessage>;
   }
   // Null only until AdminPage has created the default settings.
-  if (!saved) return <p className="p-6 text-center text-neutral-500">Loading…</p>;
+  if (!saved) return <PageMessage>Loading…</PageMessage>;
 
   const current = draft ?? saved;
   const errors = draft ? settingsErrors(draft) : [];
@@ -97,83 +96,75 @@ export function SettingsPage({ onLogout }: { onLogout: () => void }) {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-xl bg-neutral-50 px-4 pb-48 pt-6">
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <Link to="/admin" className="text-sm font-medium underline">
-            ‹ Bookings
-          </Link>
-          <h1 className="text-2xl font-bold">Settings</h1>
-        </div>
-        <button type="button" onClick={onLogout} className="text-sm font-medium underline">
-          Log out
-        </button>
-      </header>
+    <div className="min-h-screen pb-64">
+      <AdminHeader title="Settings" onLogout={onLogout} />
 
-      {conflicts.length > 0 && (
-        <div className="mb-8 rounded-2xl border border-amber-300 bg-amber-50 p-4">
-          <h2 className="font-bold text-amber-900">
-            {conflicts.length === 1
-              ? '1 booking is outside your opening hours'
-              : `${conflicts.length} bookings are outside your opening hours`}
-            {draft ? ' (with your changes)' : ''}
-          </h2>
-          <p className="mb-3 text-sm text-amber-900">
-            On a closed day, a day off, after hours or in a break. They stay booked: cancel them
-            here if needed and let the customer know.
-          </p>
-          <ul className="grid gap-3">
-            {conflicts.map((b) => (
-              <BookingCard key={b.id} booking={b} showDate cancelOnly />
-            ))}
-          </ul>
-        </div>
-      )}
+      <main className="mx-auto max-w-xl px-4 pt-6">
+        {conflicts.length > 0 && (
+          <div className="mb-8 rounded-2xl border border-brass/50 bg-brass/10 p-4">
+            <h2 className="caps font-semibold">
+              {conflicts.length === 1
+                ? '1 booking is outside your opening hours'
+                : `${conflicts.length} bookings are outside your opening hours`}
+              {draft ? ' (with your changes)' : ''}
+            </h2>
+            <p className="mb-3 text-sm">
+              On a closed day, a day off, after hours or in a break. They stay booked: cancel them
+              here if needed and let the customer know.
+            </p>
+            <ul className="grid gap-3">
+              {conflicts.map((b) => (
+                <BookingCard key={b.id} booking={b} showDate cancelOnly />
+              ))}
+            </ul>
+          </div>
+        )}
 
-      <HoursEditor weeklyHours={current.weeklyHours} onChange={(weeklyHours) => edit({ weeklyHours })} />
-      <ServicesEditor services={current.services} onChange={(services) => edit({ services })} />
-      <WindowEditor
-        today={today}
-        bookingWindowDays={current.bookingWindowDays}
-        specialPeriods={current.specialPeriods}
-        onChange={edit}
-      />
-      <DaysOffEditor today={today} daysOff={current.daysOff} onChange={(daysOff) => edit({ daysOff })} />
-      <BlockedTimes today={today} settings={current} />
+        <HoursEditor weeklyHours={current.weeklyHours} onChange={(weeklyHours) => edit({ weeklyHours })} />
+        <ServicesEditor services={current.services} onChange={(services) => edit({ services })} />
+        <ShopInfoEditor
+          shopAddress={current.shopAddress}
+          mapsUrl={current.mapsUrl}
+          onChange={edit}
+        />
+        <WindowEditor
+          today={today}
+          bookingWindowDays={current.bookingWindowDays}
+          specialPeriods={current.specialPeriods}
+          onChange={edit}
+        />
+        <DaysOffEditor today={today} daysOff={current.daysOff} onChange={(daysOff) => edit({ daysOff })} />
+        <BlockedTimes today={today} settings={current} />
+      </main>
 
       {draft && (
-        <div className="fixed inset-x-0 bottom-0 z-10 border-t border-neutral-200 bg-white/95 backdrop-blur">
+        <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 border-t border-line bg-cream/95 backdrop-blur">
           <div className="mx-auto max-w-xl px-4 py-3">
             {errors.length > 0 && (
-              <ul role="alert" className="mb-3 list-disc pl-5 text-sm text-red-700">
+              <ul role="alert" className="mb-3 list-disc pl-5 text-sm text-pole-red">
                 {errors.map((e) => (
                   <li key={e}>{e}</li>
                 ))}
               </ul>
             )}
             {confirming && (
-              <p role="alert" className="mb-3 text-sm font-medium text-amber-900">
+              <p role="alert" className="mb-3 text-sm font-semibold">
                 {newConflicts.length === 1
                   ? '1 booking falls'
                   : `${newConflicts.length} bookings fall`}{' '}
                 outside the new hours (listed at the top). They won't be cancelled. Save anyway?
               </p>
             )}
-            {saveError && <p className="mb-3 text-sm text-red-700">{saveError}</p>}
+            {saveError && <p className="mb-3 text-sm text-pole-red">{saveError}</p>}
             <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={discard}
-                disabled={saving}
-                className="rounded-xl border border-neutral-300 bg-white px-5 py-4 font-semibold"
-              >
+              <button type="button" onClick={discard} disabled={saving} className={buttonOutline}>
                 Discard
               </button>
               <button
                 type="button"
                 onClick={save}
                 disabled={saving || errors.length > 0}
-                className="rounded-xl bg-neutral-900 px-5 py-4 font-semibold text-white hover:bg-neutral-700 disabled:opacity-40"
+                className={buttonDark}
               >
                 {saving ? 'Saving…' : confirming ? 'Save anyway' : 'Save changes'}
               </button>
@@ -181,6 +172,8 @@ export function SettingsPage({ onLogout }: { onLogout: () => void }) {
           </div>
         </div>
       )}
+
+      <AdminNav active="settings" />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { MAX_BREAKS_PER_DAY } from '../../../config';
 import { WEEKDAY_NAMES } from '../../../lib/schedule';
 import { minutesToTime, timeToMinutes } from '../../../lib/time';
 import type { DayHours } from '../../../types';
-import { Section, TimeSelect } from './fields';
+import { cardClass, Section, TimeSelect } from './fields';
 
 interface Props {
   weeklyHours: DayHours[];
@@ -30,7 +30,7 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
     <Section title="Opening hours" description={`Up to ${MAX_BREAKS_PER_DAY} breaks per day.`}>
       <ul className="grid gap-3">
         {weeklyHours.map((day, i) => (
-          <li key={WEEKDAY_NAMES[i]} className="rounded-2xl border border-neutral-200 bg-white p-4">
+          <li key={WEEKDAY_NAMES[i]} className={cardClass}>
             <div className="flex items-center justify-between">
               <p className="font-semibold">{WEEKDAY_NAMES[i]}</p>
               <label className="flex items-center gap-2 text-sm font-medium">
@@ -38,14 +38,14 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
                   type="checkbox"
                   checked={!day.closed}
                   onChange={(e) => setDay(i, { ...day, closed: !e.target.checked })}
-                  className="h-5 w-5"
+                  className="h-5 w-5 accent-charcoal"
                 />
                 Open
               </label>
             </div>
 
             {day.closed ? (
-              <p className="mt-1 text-sm text-neutral-500">Closed</p>
+              <p className="mt-1 text-sm text-muted">Closed</p>
             ) : (
               <>
                 <div className="mt-3 flex items-center gap-2">
@@ -54,7 +54,7 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
                     value={day.start}
                     onChange={(start) => setDay(i, { ...day, start })}
                   />
-                  <span className="text-neutral-500">to</span>
+                  <span className="text-muted">to</span>
                   <TimeSelect
                     label={`${WEEKDAY_NAMES[i]} closing time`}
                     value={day.end}
@@ -64,7 +64,7 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
 
                 {day.breaks.map((b, j) => (
                   <div key={j} className="mt-2 flex items-center gap-2">
-                    <span className="w-12 shrink-0 text-sm text-neutral-600">Break</span>
+                    <span className="w-12 shrink-0 text-sm text-muted">Break</span>
                     <TimeSelect
                       label={`${WEEKDAY_NAMES[i]} break ${j + 1} start`}
                       value={b.start}
@@ -75,7 +75,7 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
                         })
                       }
                     />
-                    <span className="text-neutral-500">–</span>
+                    <span className="text-muted">–</span>
                     <TimeSelect
                       label={`${WEEKDAY_NAMES[i]} break ${j + 1} end`}
                       value={b.end}
@@ -92,7 +92,7 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
                       onClick={() =>
                         setDay(i, { ...day, breaks: day.breaks.filter((_, k) => k !== j) })
                       }
-                      className="shrink-0 rounded-lg px-3 py-3 text-lg leading-none text-red-700"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-xl leading-none text-pole-red hover:bg-pole-red/5"
                     >
                       ×
                     </button>
@@ -104,12 +104,12 @@ export function HoursEditor({ weeklyHours, onChange }: Props) {
                     <button
                       type="button"
                       onClick={() => setDay(i, { ...day, breaks: [...day.breaks, newBreak(day)] })}
-                      className="underline"
+                      className="inline-flex min-h-11 items-center underline-offset-4 hover:underline"
                     >
                       + Add break
                     </button>
                   )}
-                  <button type="button" onClick={() => copyToAll(day)} className="underline">
+                  <button type="button" onClick={() => copyToAll(day)} className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
                     Use these hours every day
                   </button>
                 </div>

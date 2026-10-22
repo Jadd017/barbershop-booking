@@ -2,6 +2,7 @@ import { FirebaseError } from 'firebase/app';
 import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { useState, type FormEvent } from 'react';
 import { auth } from '../../data/firebase';
+import { BarberPole, buttonDark, inputBase, linkButton, Notice } from '../ui';
 
 function loginErrorMessage(err: unknown): string {
   const code = err instanceof FirebaseError ? err.code : '';
@@ -65,57 +66,65 @@ export function LoginForm() {
   }
 
   return (
-    <div className="mx-auto max-w-sm px-4 pt-16">
-      <h1 className="mb-6 text-2xl font-bold">Admin login</h1>
-      <form onSubmit={handleLogin} noValidate>
-        <label className="mb-4 block">
-          <span className="mb-1 block text-sm font-medium">Email</span>
-          <input
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={busy}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3 outline-none focus:border-neutral-900"
-          />
-        </label>
-        <label className="mb-6 block">
-          <span className="mb-1 block text-sm font-medium">Password</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={busy}
-            className="w-full rounded-xl border border-neutral-300 px-4 py-3 outline-none focus:border-neutral-900"
-          />
-        </label>
+    <div className="min-h-screen">
+      <header className="bg-charcoal text-cream">
+        <BarberPole />
+        <div className="mx-auto max-w-sm px-4 pb-6 pt-6">
+          <p className="caps text-4xl font-semibold tracking-[0.12em]">Barbershop</p>
+          <p className="caps mt-1 text-sm font-medium tracking-[0.35em] text-brass">Admin</p>
+        </div>
+      </header>
 
-        {error && (
-          <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-        {notice && (
-          <p className="mb-4 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-800">{notice}</p>
-        )}
+      <main className="mx-auto max-w-sm px-4 pt-8">
+        <form onSubmit={handleLogin} noValidate className="rounded-2xl border border-line bg-card p-5">
+          <h1 className="caps mb-5 text-xl font-semibold">Log in</h1>
+          <label className="mb-4 block">
+            <span className="caps mb-1 block text-xs font-semibold">Email</span>
+            <input
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={busy}
+              className={`${inputBase} w-full`}
+            />
+          </label>
+          <label className="mb-6 block">
+            <span className="caps mb-1 block text-xs font-semibold">Password</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={busy}
+              className={`${inputBase} w-full`}
+            />
+          </label>
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="mb-4 w-full rounded-xl bg-neutral-900 px-5 py-3 font-semibold text-white hover:bg-neutral-700 disabled:opacity-60"
-        >
-          {busy ? 'Please wait…' : 'Log in'}
-        </button>
-        <button
-          type="button"
-          onClick={handleForgotPassword}
-          disabled={busy}
-          className="w-full text-sm font-medium text-neutral-600 underline"
-        >
-          Forgot password?
-        </button>
-      </form>
+          {error && (
+            <Notice tone="error" className="mb-4">
+              {error}
+            </Notice>
+          )}
+          {notice && (
+            <Notice tone="success" className="mb-4">
+              {notice}
+            </Notice>
+          )}
+
+          <button type="submit" disabled={busy} className={`${buttonDark} caps mb-2 w-full text-base`}>
+            {busy ? 'Please wait…' : 'Log in'}
+          </button>
+          <button
+            type="button"
+            onClick={handleForgotPassword}
+            disabled={busy}
+            className={`${linkButton} w-full justify-center text-muted underline`}
+          >
+            Forgot password?
+          </button>
+        </form>
+      </main>
     </div>
   );
 }

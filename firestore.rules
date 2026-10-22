@@ -5,7 +5,8 @@ rules_version = '2';
 // Customers sign in with Google to book; Eddy signs in with email/password.
 //
 // Collections (see src/data/api.ts):
-// - settings/shop            Eddy's settings: weekly hours and breaks, services, booking window,
+// - settings/shop            Eddy's settings: weekly hours and breaks, services (with optional
+//                            prices), booking window, shop address and Maps link,
 //                            special periods and days off. Readable by all, written only by Eddy.
 //                            Customer bookings are checked against it (see src/lib/settingsDoc.ts).
 // - bookings/{bookingCode}   full booking. Customers can read and cancel only their own (customerUid);
@@ -326,13 +327,25 @@ service cloud.firestore {
       );
     }
 
+    // The shop address and Google Maps link (both optional: older settings don't have them).
+    // The link goes in an href on the confirmation page, so it must be https, never a
+    // `javascript:` URL. Limits match src/config.ts.
+    function validShopInfo(s) {
+      return (!('shopAddress' in s) || (s.shopAddress is string && s.shopAddress.size() <= 200))
+        && (!('mapsUrl' in s) || (s.mapsUrl is string && s.mapsUrl.size() <= 500
+            && (s.mapsUrl == '' || s.mapsUrl.matches('https://[^ ]+'))));
+    }
+
     // Shape of settings/shop (see src/lib/settingsDoc.ts). Anything the booking checks read but
-    // this doesn't cover (like a service's fields) makes those checks fail, which refuses
-    // bookings rather than letting bad ones through.
+    // this doesn't cover (like a service's fields, or its optional price, which bookings never
+    // read) makes those checks fail, which refuses bookings rather than letting bad ones through.
     function validSettings(s) {
       let fields = ['barberName', 'weeklyHours', 'services', 'bookingWindowDays', 'specialPeriods',
                     'daysOff', 'updatedAt'];
-      return s.keys().hasAll(fields) && s.keys().hasOnly(fields)
+      return s.keys().hasAll(fields)
+        && s.keys().hasOnly(['barberName', 'weeklyHours', 'services', 'bookingWindowDays',
+                             'specialPeriods', 'daysOff', 'updatedAt', 'shopAddress', 'mapsUrl'])
+        && validShopInfo(s)
         && s.barberName is string
         && s.weeklyHours is list && s.weeklyHours.size() == 7
         && validDayHours(s.weeklyHours[0]) && validDayHours(s.weeklyHours[1])

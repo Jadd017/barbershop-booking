@@ -1,5 +1,50 @@
 @import "tailwindcss";
 
+/* Classic barbershop palette. Brass is for fills and borders on light backgrounds (as text it
+   only has enough contrast on charcoal); muted-strong is the muted text color for the cream
+   background, where #7A6F64 is just under 4.5:1. */
+@theme {
+  --color-charcoal: #1E1B18;
+  --color-cream: #F5EFE6;
+  --color-card: #FFFDF9;
+  --color-line: #D9CFC1;
+  --color-brass: #B8893C;
+  --color-brass-light: #D9B26F;
+  --color-ink: #2A2420;
+  --color-muted: #7A6F64;
+  --color-muted-strong: #73685D;
+  --color-pole-red: #B5302A;
+  --color-pole-blue: #1F3A6B;
+  --color-whatsapp: #1E8E4E;
+
+  --font-display: "Oswald", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Headings and labels: Oswald, uppercase, spaced out. */
+@utility caps {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* The red / cream / blue stripe at the top of customer pages. */
+@utility barber-pole {
+  height: 6px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-pole-red) 0 10px,
+    var(--color-cream) 10px 20px,
+    var(--color-pole-blue) 20px 30px,
+    var(--color-cream) 30px 40px
+  );
+}
+
 body {
-  @apply bg-neutral-50 text-neutral-900 antialiased;
+  @apply bg-cream text-ink antialiased;
+}
+
+/* Keyboard focus that shows on cream, cards and charcoal alike. */
+:focus-visible {
+  outline: 3px solid var(--color-brass);
+  outline-offset: 2px;
 }

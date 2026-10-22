@@ -30,3 +30,12 @@ export const MAX_SPECIAL_PERIODS = 4;
 
 /** Longest booking window Eddy can set, in days (enforced by firestore.rules). */
 export const MAX_BOOKING_WINDOW_DAYS = 60;
+
+/** Highest price Eddy can set for a service, in dollars. */
+export const MAX_PRICE = 1000;
+
+/** Longest shop address (enforced by firestore.rules). */
+export const MAX_ADDRESS_LENGTH = 200;
+
+/** Longest Google Maps link (enforced by firestore.rules). */
+export const MAX_MAPS_URL_LENGTH = 500;

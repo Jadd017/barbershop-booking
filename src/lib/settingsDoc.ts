@@ -20,13 +20,15 @@ export const DEFAULT_SETTINGS: Settings = {
   barberName: 'Eddy',
   weeklyHours: Array.from({ length: 7 }, () => structuredClone(DEFAULT_DAY)),
   services: [
-    { id: 'haircut', name: 'Haircut', durationMinutes: 30 },
-    { id: 'beard', name: 'Beard', durationMinutes: 15 },
-    { id: 'haircut-beard', name: 'Haircut + Beard', durationMinutes: 45 },
+    { id: 'haircut', name: 'Haircut', durationMinutes: 30, price: 10 },
+    { id: 'beard', name: 'Beard', durationMinutes: 15, price: 5 },
+    { id: 'haircut-beard', name: 'Haircut + Beard', durationMinutes: 45, price: 13 },
   ],
   bookingWindowDays: 4,
   specialPeriods: [],
   daysOff: [],
+  shopAddress: '',
+  mapsUrl: '',
 };
 
 /** settings/shop as stored (without updatedAt, which api.ts adds on save). */
@@ -39,12 +41,16 @@ export interface SettingsDoc {
     close: number;
     breaks: { start: number; end: number }[];
   }[];
-  services: Record<string, { name: string; durationMinutes: number; order: number }>;
+  /** price is left out when the service has none. */
+  services: Record<string, { name: string; durationMinutes: number; order: number; price?: number }>;
   bookingWindowDays: number;
   /** startDay and endDay are day numbers (see dayNumber), both included. */
   specialPeriods: { name: string; startDay: number; endDay: number; daysAhead: number }[];
   /** "YYYY-MM-DD", sorted. */
   daysOff: DateKey[];
+  /** Both optional in the rules: settings saved before they existed don't have them. */
+  shopAddress?: string;
+  mapsUrl?: string;
 }
 
 const DAY_MS = 86_400_000;
@@ -72,7 +78,12 @@ export function toSettingsDoc(settings: Settings): SettingsDoc {
     services: Object.fromEntries(
       settings.services.map((s, order) => [
         s.id,
-        { name: s.name.trim(), durationMinutes: s.durationMinutes, order },
+        {
+          name: s.name.trim(),
+          durationMinutes: s.durationMinutes,
+          order,
+          ...(s.price === undefined ? {} : { price: s.price }),
+        },
       ]),
     ),
     bookingWindowDays: settings.bookingWindowDays,
@@ -83,13 +94,20 @@ export function toSettingsDoc(settings: Settings): SettingsDoc {
       daysAhead: p.daysAhead,
     })),
     daysOff: [...settings.daysOff].sort(),
+    shopAddress: settings.shopAddress.trim(),
+    mapsUrl: settings.mapsUrl.trim(),
   };
 }
 
 export function fromSettingsDoc(doc: SettingsDoc): Settings {
   const services: Service[] = Object.entries(doc.services ?? {})
     .sort(([, a], [, b]) => a.order - b.order)
-    .map(([id, s]) => ({ id, name: s.name, durationMinutes: s.durationMinutes }));
+    .map(([id, s]) => ({
+      id,
+      name: s.name,
+      durationMinutes: s.durationMinutes,
+      ...(typeof s.price === 'number' ? { price: s.price } : {}),
+    }));
   return {
     barberName: doc.barberName,
     weeklyHours: doc.weeklyHours.map((d) => ({
@@ -107,5 +125,7 @@ export function fromSettingsDoc(doc: SettingsDoc): Settings {
       daysAhead: p.daysAhead,
     })),
     daysOff: doc.daysOff ?? [],
+    shopAddress: doc.shopAddress ?? '',
+    mapsUrl: doc.mapsUrl ?? '',
   };
 }

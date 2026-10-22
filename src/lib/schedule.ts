@@ -3,13 +3,17 @@
  * firestore.rules re-checks the same things for customer bookings, so keep the two in step.
  */
 import {
+  MAX_ADDRESS_LENGTH,
   MAX_BOOKING_WINDOW_DAYS,
   MAX_BREAKS_PER_DAY,
+  MAX_MAPS_URL_LENGTH,
+  MAX_PRICE,
   MAX_SERVICE_MINUTES,
   MAX_SPECIAL_PERIODS,
   SLOT_MINUTES,
 } from '../config';
 import type { DateKey, DayHours, Settings, TimeString } from '../types';
+import { isSafeLink } from './shop';
 import { fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
 
 export const WEEKDAY_NAMES = [
@@ -52,6 +56,20 @@ export function bookableDays(settings: Settings, now: Date = new Date()): DateKe
   return upcomingDateKeys(bookingWindowOn(settings, toDateKey(now)), now).filter(
     (date) => hoursOn(settings, date) !== null,
   );
+}
+
+/**
+ * Every day of the booking window, open or not, so the page can show closed days too.
+ * The open ones are exactly bookableDays.
+ */
+export function windowDays(
+  settings: Settings,
+  now: Date = new Date(),
+): { date: DateKey; open: boolean }[] {
+  return upcomingDateKeys(bookingWindowOn(settings, toDateKey(now)), now).map((date) => ({
+    date,
+    open: hoursOn(settings, date) !== null,
+  }));
 }
 
 /** True if `durationMinutes` from `start` on `date` is within that day's hours and clear of its breaks. */
@@ -145,6 +163,19 @@ export function settingsErrors(settings: Settings): string[] {
     if (!Number.isInteger(d) || d < SLOT_MINUTES || d > MAX_SERVICE_MINUTES || d % SLOT_MINUTES) {
       errors.push(`${name || 'A service'}: length must be 15 to ${MAX_SERVICE_MINUTES} minutes.`);
     }
+    const p = service.price;
+    // Whole cents, so "$12.50" is fine but "$12.555" isn't.
+    if (p !== undefined && !(p >= 0 && p <= MAX_PRICE && Math.round(p * 100) === p * 100)) {
+      errors.push(`${name || 'A service'}: price must be 0 to ${MAX_PRICE} dollars, or empty.`);
+    }
+  }
+
+  if (settings.shopAddress.trim().length > MAX_ADDRESS_LENGTH) {
+    errors.push(`The address can be at most ${MAX_ADDRESS_LENGTH} characters.`);
+  }
+  const mapsUrl = settings.mapsUrl.trim();
+  if (mapsUrl && (!isSafeLink(mapsUrl) || mapsUrl.length > MAX_MAPS_URL_LENGTH)) {
+    errors.push('The Google Maps link must start with https:// (copy it from Share in Google Maps).');
   }
 
   if (!isWholeDays(settings.bookingWindowDays, MAX_BOOKING_WINDOW_DAYS)) {

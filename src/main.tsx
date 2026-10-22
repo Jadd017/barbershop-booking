@@ -1,3 +1,5 @@
+import '@fontsource/oswald/latin-500.css'
+import '@fontsource/oswald/latin-600.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'

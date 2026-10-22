@@ -4,7 +4,8 @@ import { hoursOn, overlaps } from '../../../lib/schedule';
 import { formatDayLong, timeToMinutes } from '../../../lib/time';
 import type { AdminBooking, BlockedTime, DateKey, Settings } from '../../../types';
 import { BookingCard } from '../BookingCard';
-import { inputClass, Section, smallButtonClass, TimeSelect } from './fields';
+import { inputBase } from '../../ui';
+import { cardClass, removeButtonClass, Section, smallButtonClass, TimeSelect } from './fields';
 
 interface Props {
   today: DateKey;
@@ -103,7 +104,7 @@ export function BlockedTimes({ today, settings }: Props) {
           {blocked.map((range) => (
             <li
               key={`${range.date}_${range.start}`}
-              className="flex items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3"
+              className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-card px-4 py-2"
             >
               <span className="text-sm font-medium">
                 {formatDayLong(range.date)} ·{' '}
@@ -114,7 +115,7 @@ export function BlockedTimes({ today, settings }: Props) {
               <button
                 type="button"
                 onClick={() => unblock(range)}
-                className="shrink-0 text-sm font-semibold text-red-700 underline"
+                className={removeButtonClass}
               >
                 Unblock
               </button>
@@ -123,7 +124,7 @@ export function BlockedTimes({ today, settings }: Props) {
         </ul>
       )}
 
-      <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+      <div className={cardClass}>
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Day</span>
           <input
@@ -131,22 +132,22 @@ export function BlockedTimes({ today, settings }: Props) {
             min={today}
             value={date}
             onChange={(e) => e.target.value && setDate(e.target.value)}
-            className={`${inputClass} w-full`}
+            className={`${inputBase} w-full`}
           />
         </label>
-        <p className="mt-1 text-sm text-neutral-500">
+        <p className="mt-1 text-sm text-muted">
           {hours ? `Open ${hours.start}–${hours.end} that day.` : 'The shop is closed that day.'}
         </p>
         <div className="mt-3 flex items-center gap-2">
           <TimeSelect label="Block from" value={start} onChange={setStart} />
-          <span className="text-neutral-500">to</span>
+          <span className="text-muted">to</span>
           <TimeSelect label="Block until" value={end} onChange={setEnd} />
         </div>
-        {!validRange && <p className="mt-2 text-sm text-red-600">The end must be after the start.</p>}
+        {!validRange && <p className="mt-2 text-sm text-pole-red">The end must be after the start.</p>}
 
         {clashes.length > 0 && (
-          <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
-            <p className="mb-3 text-sm font-medium text-amber-900">
+          <div className="mt-4 rounded-xl border border-brass/50 bg-brass/10 p-3">
+            <p className="mb-3 text-sm font-medium text-ink">
               {clashes.length === 1 ? 'This booking is' : `These ${clashes.length} bookings are`}{' '}
               in that time. Blocking won't cancel {clashes.length === 1 ? 'it' : 'them'}: cancel
               here if needed and let the customer know. If you block first, a booking's time opens
@@ -161,7 +162,7 @@ export function BlockedTimes({ today, settings }: Props) {
         )}
 
         {message && (
-          <p className={`mt-3 text-sm ${message.error ? 'text-red-600' : 'text-green-700'}`}>
+          <p className={`mt-3 text-sm ${message.error ? 'text-pole-red' : 'text-ink'}`}>
             {message.text}
           </p>
         )}

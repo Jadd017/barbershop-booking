@@ -1,7 +1,8 @@
 import { MAX_BOOKING_WINDOW_DAYS, MAX_SPECIAL_PERIODS } from '../../../config';
 import { addDays } from '../../../lib/time';
 import type { DateKey, SpecialPeriod } from '../../../types';
-import { inputClass, Section, smallButtonClass } from './fields';
+import { inputBase } from '../../ui';
+import { cardClass, removeButtonClass, Section, smallButtonClass } from './fields';
 
 interface Props {
   today: DateKey;
@@ -29,7 +30,7 @@ function DaysInput({
       max={MAX_BOOKING_WINDOW_DAYS}
       value={Number.isNaN(value) ? '' : value}
       onChange={(e) => onChange(e.target.value === '' ? NaN : Number(e.target.value))}
-      className={`${inputClass} w-20 text-center tabular-nums`}
+      className={`${inputBase} w-20 text-center tabular-nums`}
     />
   );
 }
@@ -41,7 +42,7 @@ export function WindowEditor({ today, bookingWindowDays, specialPeriods, onChang
 
   return (
     <Section title="Booking window">
-      <div className="flex items-center gap-3 rounded-2xl border border-neutral-200 bg-white p-4">
+      <div className={`${cardClass} flex items-center gap-3`}>
         <span className="flex-1 text-sm">Customers can book this many days ahead, today included</span>
         <DaysInput
           label="Days ahead"
@@ -51,12 +52,12 @@ export function WindowEditor({ today, bookingWindowDays, specialPeriods, onChang
       </div>
 
       <h3 className="mt-5 font-semibold">Special periods</h3>
-      <p className="mb-3 text-sm text-neutral-600">
+      <p className="mb-3 text-sm text-muted-strong">
         For holidays: between these dates, customers can book further ahead.
       </p>
       <ul className="grid gap-3">
         {specialPeriods.map((period, i) => (
-          <li key={i} className="rounded-2xl border border-neutral-200 bg-white p-4">
+          <li key={i} className={cardClass}>
             <label className="block">
               <span className="mb-1 block text-sm font-medium">Name</span>
               <input
@@ -65,7 +66,7 @@ export function WindowEditor({ today, bookingWindowDays, specialPeriods, onChang
                 maxLength={40}
                 placeholder="Christmas"
                 onChange={(e) => setPeriod(i, { ...period, name: e.target.value })}
-                className={`${inputClass} w-full`}
+                className={`${inputBase} w-full`}
               />
             </label>
             <div className="mt-3 grid grid-cols-2 gap-2">
@@ -75,7 +76,7 @@ export function WindowEditor({ today, bookingWindowDays, specialPeriods, onChang
                   type="date"
                   value={period.start}
                   onChange={(e) => setPeriod(i, { ...period, start: e.target.value })}
-                  className={`${inputClass} w-full`}
+                  className={`${inputBase} w-full`}
                 />
               </label>
               <label>
@@ -85,7 +86,7 @@ export function WindowEditor({ today, bookingWindowDays, specialPeriods, onChang
                   value={period.end}
                   min={period.start}
                   onChange={(e) => setPeriod(i, { ...period, end: e.target.value })}
-                  className={`${inputClass} w-full`}
+                  className={`${inputBase} w-full`}
                 />
               </label>
             </div>
@@ -100,7 +101,7 @@ export function WindowEditor({ today, bookingWindowDays, specialPeriods, onChang
             <button
               type="button"
               onClick={() => onChange({ specialPeriods: specialPeriods.filter((_, j) => j !== i) })}
-              className="mt-3 text-sm font-semibold text-red-700 underline"
+              className={`${removeButtonClass} mt-2`}
             >
               Remove
             </button>

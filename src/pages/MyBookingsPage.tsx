@@ -1,7 +1,17 @@
 import type { User } from 'firebase/auth';
+import { ArrowLeft, Clock, Scissors } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { AccountLine } from '../components/AccountLine';
+import { ShopHeader } from '../components/ShopHeader';
+import {
+  buttonDanger,
+  buttonDangerOutline,
+  buttonDark,
+  buttonOutline,
+  Notice,
+  SectionLabel,
+  StatusChip,
+} from '../components/ui';
 import {
   AlreadyCancelledError,
   cancelMyBooking,
@@ -17,17 +27,15 @@ import {
   signOutCustomer,
 } from '../data/auth';
 import { useCustomer } from '../hooks/useCustomer';
+import { useSettings } from '../hooks/useSettings';
 import { clearLastBooking, loadLastBooking } from '../lib/lastBooking';
+import { DEFAULT_SETTINGS } from '../lib/settingsDoc';
 import { isPast } from '../lib/slots';
-import { formatDayLong } from '../lib/time';
+import { formatDayLong, minutesToTime, timeToMinutes } from '../lib/time';
 import type { BookingStatus, CustomerBooking } from '../types';
 
-const STATUS_LABELS: Record<BookingStatus, string> = {
-  booked: 'Booked',
-  cancelled: 'Cancelled',
-  done: 'Done',
-  'no-show': 'Missed',
-};
+/** Customers see "Missed" rather than Eddy's "No-show". */
+const STATUS_LABELS: Partial<Record<BookingStatus, string>> = { 'no-show': 'Missed' };
 
 const GENERIC_ERROR = 'Something went wrong. Check your connection and try again.';
 
@@ -38,6 +46,7 @@ function isUpcoming(b: CustomerBooking): boolean {
 
 export function MyBookingsPage() {
   const customer = useCustomer();
+  const { settings } = useSettings();
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
 
@@ -58,42 +67,46 @@ export function MyBookingsPage() {
   }
 
   return (
-    <div className="mx-auto min-h-screen max-w-xl px-4 pb-16 pt-8">
-      <Link to="/" className="mb-6 inline-block text-sm font-medium underline">
-        ← Back to booking
-      </Link>
-      <h1 className="mb-2 text-2xl font-bold">My bookings</h1>
-
-      {customer === undefined ? (
-        <p className="text-sm text-neutral-500">Loading…</p>
-      ) : customer ? (
-        <>
-          <div className="mb-6">
-            <AccountLine customer={customer} onSignOut={() => signOutCustomer().catch(console.error)} />
-          </div>
-          <BookingList customer={customer} />
-        </>
-      ) : (
-        <>
-          <p className="mb-6 text-sm text-neutral-600">
-            Sign in with the Google account you booked with to see and cancel your bookings.
-          </p>
-          {(signInError || isInAppBrowser()) && (
-            <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-              {signInError ??
-                'Google sign-in may not work inside this app. If it fails, open this page in Chrome or Safari.'}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={signIn}
-            disabled={signingIn}
-            className="w-full rounded-xl bg-neutral-900 px-5 py-3 font-semibold text-white hover:bg-neutral-700 disabled:opacity-60"
+    <div className="min-h-screen pb-16">
+      <ShopHeader
+        barberName={settings?.barberName ?? DEFAULT_SETTINGS.barberName}
+        customer={customer}
+        onSignOut={() => signOutCustomer().catch(console.error)}
+        action={
+          <Link
+            to="/"
+            className="caps inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-brass/60 px-4 text-xs font-medium text-cream hover:bg-cream/10"
           >
-            {signingIn ? 'Signing in…' : 'Sign in with Google'}
-          </button>
-        </>
-      )}
+            <ArrowLeft aria-hidden size={16} className="text-brass-light" />
+            Book
+          </Link>
+        }
+      />
+
+      <main className="mx-auto max-w-xl px-4 pt-6">
+        <h1 className="caps mb-5 text-2xl font-semibold">My bookings</h1>
+
+        {customer === undefined ? (
+          <p className="text-sm text-muted-strong">Loading…</p>
+        ) : customer ? (
+          <BookingList customer={customer} />
+        ) : (
+          <div className="rounded-2xl border border-line bg-card p-5">
+            <p className="mb-5">
+              Sign in with the Google account you booked with to see and cancel your bookings.
+            </p>
+            {(signInError || isInAppBrowser()) && (
+              <Notice tone="error" className="mb-4">
+                {signInError ??
+                  'Google sign-in may not work inside this app. If it fails, open this page in Chrome or Safari.'}
+              </Notice>
+            )}
+            <button type="button" onClick={signIn} disabled={signingIn} className={`${buttonDark} w-full`}>
+              {signingIn ? 'Signing in…' : 'Sign in with Google'}
+            </button>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
@@ -120,15 +133,11 @@ function BookingList({ customer }: { customer: User }) {
   }, [uid]);
 
   if (loadError) {
-    return (
-      <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-        Couldn't load your bookings. Check your connection and refresh.
-      </p>
-    );
+    return <Notice tone="error">Couldn't load your bookings. Check your connection and refresh.</Notice>;
   }
 
   const items = bookings?.uid === uid ? bookings.items : null;
-  if (!items) return <p className="text-sm text-neutral-500">Loading…</p>;
+  if (!items) return <p className="text-sm text-muted-strong">Loading…</p>;
 
   const upcoming = items.filter(isUpcoming);
   // Most recent first.
@@ -137,16 +146,16 @@ function BookingList({ customer }: { customer: User }) {
   return (
     <>
       {justCancelled && (
-        <p className="mb-6 rounded-xl bg-green-50 px-4 py-3 text-sm text-green-800">
+        <Notice tone="success" className="mb-6">
           Your booking has been cancelled and the time is free again.
-        </p>
+        </Notice>
       )}
 
-      <h2 className="mb-3 font-semibold">Upcoming</h2>
+      <SectionLabel>Upcoming</SectionLabel>
       {upcoming.length === 0 ? (
-        <p className="mb-8 rounded-2xl border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500">
+        <p className="mb-8 rounded-2xl border border-dashed border-line p-6 text-center text-sm text-muted-strong">
           No upcoming bookings.{' '}
-          <Link to="/" className="font-medium text-neutral-900 underline">
+          <Link to="/" className="font-semibold text-ink underline">
             Book now
           </Link>
         </p>
@@ -160,7 +169,7 @@ function BookingList({ customer }: { customer: User }) {
 
       {earlier.length > 0 && (
         <>
-          <h2 className="mb-3 font-semibold">Past and cancelled</h2>
+          <SectionLabel>Past and cancelled</SectionLabel>
           <ul className="grid gap-3">
             {earlier.map((b) => (
               <BookingItem key={b.bookingCode} booking={b} onCancelled={() => setJustCancelled(true)} />
@@ -183,7 +192,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
   const [error, setError] = useState<string | null>(null);
 
   const upcoming = isUpcoming(booking);
-  const cancelled = booking.status === 'cancelled';
+  const end = minutesToTime(timeToMinutes(booking.startTime) + booking.durationMinutes);
 
   // The live listener moves the booking to "Past and cancelled", so success needs no update here.
   async function handleCancel() {
@@ -210,29 +219,31 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
   }
 
   return (
-    <li className={`rounded-2xl border border-neutral-200 p-5 ${upcoming ? '' : 'opacity-70'}`}>
-      <div className="mb-2 flex items-start justify-between gap-3">
+    <li className={`rounded-2xl border border-line bg-card p-5 ${upcoming ? 'shadow-sm' : 'opacity-75'}`}>
+      <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className="font-semibold">{formatDayLong(booking.date)}</p>
-          <p className="text-sm text-neutral-600">
-            <span className="tabular-nums">{booking.startTime}</span> · {booking.serviceName} ·{' '}
-            {booking.durationMinutes} min
+          <p className="caps text-lg font-semibold">{formatDayLong(booking.date)}</p>
+          <p className="flex items-center gap-1.5 text-sm">
+            <Clock aria-hidden size={14} className="text-muted" />
+            <span className="tabular-nums">
+              {booking.startTime}–{end}
+            </span>
+          </p>
+          <p className="flex items-center gap-1.5 text-sm">
+            <Scissors aria-hidden size={14} className="text-muted" />
+            {booking.serviceName} · {booking.durationMinutes} min
           </p>
         </div>
-        <span
-          className={`shrink-0 text-sm font-semibold ${cancelled ? 'text-red-600' : 'text-green-700'}`}
-        >
-          {STATUS_LABELS[booking.status]}
-        </span>
+        <StatusChip status={booking.status} label={STATUS_LABELS[booking.status]} />
       </div>
-      <p className="text-sm text-neutral-500">
-        Code <span className="font-mono font-semibold tracking-wider">{booking.bookingCode}</span>
+      <p className="border-t border-dashed border-line pt-3 text-sm text-muted">
+        Code <span className="caps font-semibold tracking-[0.2em] text-ink">{booking.bookingCode}</span>
       </p>
 
       {upcoming &&
         (confirmingCancel ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
-            <p className="mb-4 text-sm font-medium text-red-800">
+          <div className="mt-4 rounded-xl border border-pole-red/30 bg-pole-red/5 p-4">
+            <p className="mb-4 text-sm font-semibold text-pole-red">
               Are you sure you want to cancel this booking?
             </p>
             <div className="flex gap-3">
@@ -240,7 +251,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
                 type="button"
                 onClick={() => setConfirmingCancel(false)}
                 disabled={cancelling}
-                className="flex-1 rounded-xl border border-neutral-300 bg-white px-4 py-3 font-semibold hover:border-neutral-500"
+                className={`${buttonOutline} flex-1`}
               >
                 Keep it
               </button>
@@ -248,7 +259,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
                 type="button"
                 onClick={handleCancel}
                 disabled={cancelling}
-                className="flex-1 rounded-xl bg-red-600 px-4 py-3 font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                className={`${buttonDanger} flex-1`}
               >
                 {cancelling ? 'Cancelling…' : 'Yes, cancel'}
               </button>
@@ -258,16 +269,16 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
           <button
             type="button"
             onClick={() => setConfirmingCancel(true)}
-            className="mt-4 w-full rounded-xl border border-red-300 px-5 py-3 font-semibold text-red-700 hover:bg-red-50"
+            className={`${buttonDangerOutline} mt-4 w-full`}
           >
             Cancel booking
           </button>
         ))}
 
       {error && (
-        <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+        <Notice tone="error" className="mt-4">
           {error}
-        </p>
+        </Notice>
       )}
     </li>
   );

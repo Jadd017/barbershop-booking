@@ -1,21 +1,61 @@
+import { ChevronDown, ChevronLeft, ChevronRight, Coffee, Lock } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
-import { subscribeBookings } from '../../data/api';
+import { useLocation, useNavigate } from 'react-router';
+import { SLOT_MINUTES } from '../../config';
+import { subscribeBlockedTimes, subscribeBookings } from '../../data/api';
+import { useNow } from '../../hooks/useNow';
 import { useSettings } from '../../hooks/useSettings';
-import { addDays, formatDayLong, toDateKey } from '../../lib/time';
-import type { AdminBooking, DateKey } from '../../types';
+import { useStartTimes } from '../../hooks/useStartTimes';
+import { hoursOn } from '../../lib/schedule';
+import { addDays, formatDayLong, minutesToTime, timeToMinutes, toDateKey } from '../../lib/time';
+import type { AdminBooking, BlockedTime, DateKey, Service } from '../../types';
+import { buttonOutline, linkButton, Notice, SectionLabel, StatusChip } from '../ui';
 import { AddBookingSheet } from './AddBookingSheet';
-import { BookingCard } from './BookingCard';
+import { AdminHeader } from './AdminHeader';
+import { AdminNav, type AdminNavState } from './AdminNav';
+import { BookingActions } from './BookingActions';
+import { BookingDetails } from './BookingCard';
 
+/** Counting free start times for a one-slot service gives the number of free slots. */
+const ONE_SLOT: Service = { id: 'slot', name: 'Slot', durationMinutes: SLOT_MINUTES };
+
+/** One line of a day's list: a booking, a break or a blocked time. */
+type Entry =
+  | { kind: 'booking'; start: number; booking: AdminBooking }
+  | { kind: 'break' | 'blocked'; start: number; end: number };
+
+const endOf = (b: AdminBooking) => timeToMinutes(b.startTime) + b.durationMinutes;
+
+/** "25 min", "1 h", "1 h 20 min". */
+function formatWait(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (!h) return `${m} min`;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/**
+ * Eddy's day. "Today" shows who's up next and the rest of the day; "Calendar" shows any day.
+ * Which one, and whether the walk-in sheet is open, lives in the history state (AdminNav).
+ */
 export function Dashboard({ onLogout }: { onLogout: () => void }) {
-  const [today] = useState(() => toDateKey(new Date()));
-  const [date, setDate] = useState<DateKey>(today);
-  // Tagged with their date, so a previous day's list is never shown for a new day.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const nav = (location.state ?? {}) as AdminNavState;
+  const mode = nav.mode ?? 'today';
+
+  const now = useNow();
+  const today = toDateKey(now);
+  const [calendarDate, setCalendarDate] = useState<DateKey>(today);
+  const date = mode === 'today' ? today : calendarDate;
+
+  // Both tagged with their date, so a previous day's list is never shown for a new day.
   const [bookings, setBookings] = useState<{ date: DateKey; items: AdminBooking[] } | null>(null);
+  const [blocked, setBlocked] = useState<{ date: DateKey; items: BlockedTime[] } | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
   const { settings } = useSettings();
-  const [adding, setAdding] = useState(false);
+  const { startTimes } = useStartTimes(date, ONE_SLOT, settings ?? null);
 
   useEffect(() => {
     return subscribeBookings(
@@ -31,126 +71,296 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     );
   }, [date]);
 
+  useEffect(
+    () =>
+      subscribeBlockedTimes(
+        date,
+        (all) => setBlocked({ date, items: all.filter((b) => b.date === date) }),
+        (err) => console.error(err),
+      ),
+    [date],
+  );
+
   const items = bookings?.date === date ? bookings.items : null;
-  const cancelledCount = items?.filter((b) => b.status === 'cancelled').length ?? 0;
-  const visible = items?.filter((b) => showCancelled || b.status !== 'cancelled') ?? [];
-  const activeCount = (items?.length ?? 0) - cancelledCount;
+  const blockedToday = blocked?.date === date ? blocked.items : [];
+  const hours = settings ? hoursOn(settings, date) : null;
+
+  const active = items?.filter((b) => b.status !== 'cancelled') ?? [];
+  const cancelled = items?.filter((b) => b.status === 'cancelled') ?? [];
+  const freeSlots = startTimes?.filter((o) => o.available).length;
+
+  // Minutes since midnight that count as "now" on `date` (past days are all over).
+  const nowMinutes = date === today ? now.getHours() * 60 + now.getMinutes() : date < today ? 24 * 60 : -1;
+
+  const breaksAndBlocks: Entry[] = [
+    ...(hours?.breaks ?? []).map((b) => ({
+      kind: 'break' as const,
+      start: timeToMinutes(b.start),
+      end: timeToMinutes(b.end),
+    })),
+    ...blockedToday.map((b) => ({
+      kind: 'blocked' as const,
+      start: timeToMinutes(b.start),
+      end: timeToMinutes(b.end),
+    })),
+  ];
+  const asEntry = (booking: AdminBooking): Entry => ({
+    kind: 'booking',
+    start: timeToMinutes(booking.startTime),
+    booking,
+  });
+  const byStart = (a: Entry, b: Entry) => a.start - b.start;
+
+  // Today: the first booking not over yet is up next, the rest of the day follows.
+  const pending = active.filter((b) => b.status === 'booked' && endOf(b) > nowMinutes);
+  const upNext = mode === 'today' ? pending[0] : undefined;
+  const later = [
+    ...pending.slice(1).map(asEntry),
+    ...breaksAndBlocks.filter((e) => e.kind !== 'booking' && e.end > nowMinutes),
+  ].sort(byStart);
+  const earlier = active.filter((b) => !pending.includes(b));
+  const wholeDay = [...active.map(asEntry), ...breaksAndBlocks].sort(byStart);
+
+  function closeWalkIn(nextMode = mode) {
+    navigate('/admin', { replace: true, state: { mode: nextMode } satisfies AdminNavState });
+  }
 
   return (
-    <div className="mx-auto min-h-screen max-w-xl bg-neutral-50 px-4 pb-28 pt-6">
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Bookings</h1>
-        <div className="flex items-center gap-4">
-          <Link to="/admin/settings" className="text-sm font-medium underline">
-            Settings
-          </Link>
-          <button type="button" onClick={onLogout} className="text-sm font-medium underline">
-            Log out
-          </button>
-        </div>
-      </header>
+    <div className="min-h-screen pb-28">
+      <AdminHeader
+        overline={formatDayLong(date)}
+        title={mode === 'today' ? 'Today' : 'Calendar'}
+        onLogout={onLogout}
+      >
+        <dl className="mt-4 grid grid-cols-3 gap-2">
+          {[
+            ['Bookings', items ? active.length : '–'],
+            ['Done', items ? active.filter((b) => b.status === 'done').length : '–'],
+            ['Free slots', freeSlots ?? '–'],
+          ].map(([label, value]) => (
+            <div
+              key={label}
+              className="flex flex-col-reverse rounded-xl border border-cream/15 bg-cream/5 px-3 py-2"
+            >
+              <dt className="caps text-[11px] font-medium text-brass-light">{label}</dt>
+              <dd className="caps text-3xl font-semibold tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </AdminHeader>
 
-      <div className="mb-2 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setDate(addDays(date, -1))}
-          aria-label="Previous day"
-          className="rounded-xl border border-neutral-300 bg-white px-4 py-3 font-bold"
-        >
-          ‹
-        </button>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => e.target.value && setDate(e.target.value)}
-          className="min-w-0 flex-1 rounded-xl border border-neutral-300 bg-white px-3 py-3 text-center"
-        />
-        <button
-          type="button"
-          onClick={() => setDate(addDays(date, 1))}
-          aria-label="Next day"
-          className="rounded-xl border border-neutral-300 bg-white px-4 py-3 font-bold"
-        >
-          ›
-        </button>
-      </div>
-
-      <div className="mb-4 flex items-center justify-between text-sm">
-        <p className="font-medium text-neutral-700">
-          {date === today ? 'Today · ' : ''}
-          {formatDayLong(date)}
-        </p>
-        {date !== today && (
-          <button type="button" onClick={() => setDate(today)} className="font-medium underline">
-            Back to today
-          </button>
-        )}
-      </div>
-
-      {loadError ? (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-          Couldn't load bookings. Check your connection and refresh.
-        </p>
-      ) : !items ? (
-        <p className="text-sm text-neutral-500">Loading…</p>
-      ) : (
-        <>
-          <div className="mb-3 flex items-center justify-between text-sm">
-            <p className="text-neutral-600">
-              {activeCount} booking{activeCount === 1 ? '' : 's'}
-            </p>
-            {cancelledCount > 0 && (
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={showCancelled}
-                  onChange={(e) => setShowCancelled(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                Show cancelled ({cancelledCount})
-              </label>
+      <main className="mx-auto max-w-xl px-4 pt-5">
+        {mode === 'calendar' && (
+          <div className="mb-5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCalendarDate(addDays(date, -1))}
+                aria-label="Previous day"
+                className={`${buttonOutline} px-3`}
+              >
+                <ChevronLeft aria-hidden size={20} />
+              </button>
+              <input
+                type="date"
+                aria-label="Day"
+                value={date}
+                onChange={(e) => e.target.value && setCalendarDate(e.target.value)}
+                className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-card px-3 text-center"
+              />
+              <button
+                type="button"
+                onClick={() => setCalendarDate(addDays(date, 1))}
+                aria-label="Next day"
+                className={`${buttonOutline} px-3`}
+              >
+                <ChevronRight aria-hidden size={20} />
+              </button>
+            </div>
+            {date !== today && (
+              <button
+                type="button"
+                onClick={() => setCalendarDate(today)}
+                className={`${linkButton} text-ink underline`}
+              >
+                Back to today
+              </button>
             )}
           </div>
+        )}
 
-          {visible.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500">
-              No bookings on this day.
-            </p>
-          ) : (
-            <ul className="grid gap-3">
-              {visible.map((b) => (
-                <BookingCard key={b.id} booking={b} />
-              ))}
-            </ul>
-          )}
-        </>
-      )}
+        {loadError ? (
+          <Notice tone="error">Couldn't load bookings. Check your connection and refresh.</Notice>
+        ) : !items ? (
+          <p className="text-sm text-muted-strong">Loading…</p>
+        ) : (
+          <>
+            {settings && !hours && (
+              <Notice tone="warning" className="mb-4">
+                The shop is closed {date === today ? 'today' : 'on this day'}.
+              </Notice>
+            )}
 
-      {settings && (
-        <div className="fixed inset-x-0 bottom-0 border-t border-neutral-200 bg-white/95 backdrop-blur">
-          <div className="mx-auto max-w-xl px-4 py-3">
-            <button
-              type="button"
-              onClick={() => setAdding(true)}
-              className="w-full rounded-xl bg-neutral-900 px-5 py-4 font-semibold text-white hover:bg-neutral-700"
-            >
-              + Add booking
-            </button>
-          </div>
-        </div>
-      )}
+            {mode === 'today' ? (
+              <>
+                {upNext && <UpNextCard booking={upNext} nowMinutes={nowMinutes} />}
 
-      {adding && settings && (
+                <SectionLabel className="mt-6">Later today</SectionLabel>
+                {later.length === 0 ? (
+                  <Empty>{upNext ? 'Nothing else today.' : 'No more bookings today.'}</Empty>
+                ) : (
+                  <EntryList entries={later} />
+                )}
+
+                {earlier.length > 0 && (
+                  <>
+                    <SectionLabel className="mt-6">Earlier today</SectionLabel>
+                    <EntryList entries={earlier.map(asEntry)} />
+                  </>
+                )}
+              </>
+            ) : wholeDay.length === 0 ? (
+              <Empty>No bookings on this day.</Empty>
+            ) : (
+              <EntryList entries={wholeDay} />
+            )}
+
+            {cancelled.length > 0 && (
+              <div className="mt-6">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelled(!showCancelled)}
+                  aria-expanded={showCancelled}
+                  className={`${linkButton} text-muted-strong`}
+                >
+                  <ChevronDown
+                    aria-hidden
+                    size={16}
+                    className={showCancelled ? 'rotate-180 transition' : 'transition'}
+                  />
+                  {showCancelled ? 'Hide' : 'Show'} cancelled ({cancelled.length})
+                </button>
+                {showCancelled && <EntryList entries={cancelled.map(asEntry)} />}
+              </div>
+            )}
+          </>
+        )}
+      </main>
+
+      <AdminNav active={mode} />
+
+      {nav.walkIn && settings && (
         <AddBookingSheet
           settings={settings}
           initialDate={date}
-          onClose={() => setAdding(false)}
+          onClose={() => closeWalkIn()}
           onAdded={(addedDate) => {
-            setAdding(false);
-            setDate(addedDate);
+            setCalendarDate(addedDate);
+            closeWalkIn(addedDate === today && mode === 'today' ? 'today' : 'calendar');
           }}
         />
       )}
     </div>
+  );
+}
+
+function Empty({ children }: { children: string }) {
+  return (
+    <p className="rounded-2xl border border-dashed border-line p-5 text-center text-sm text-muted-strong">
+      {children}
+    </p>
+  );
+}
+
+/** The next customer, with big Done / No-show buttons. */
+function UpNextCard({ booking, nowMinutes }: { booking: AdminBooking; nowMinutes: number }) {
+  const wait = timeToMinutes(booking.startTime) - nowMinutes;
+  return (
+    <section
+      aria-label="Up next"
+      className="rounded-2xl border-2 border-brass bg-card p-4 shadow-md"
+    >
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="caps text-sm font-semibold">
+          Up next <span className="text-line">·</span> {wait > 0 ? `In ${formatWait(wait)}` : 'Now'}
+        </p>
+        <StatusChip status={booking.status} />
+      </div>
+      <p className="caps text-4xl font-semibold tabular-nums">
+        {booking.startTime}
+        <span className="text-xl font-medium text-muted">
+          –{minutesToTime(endOf(booking))}
+        </span>
+      </p>
+      <p className="text-2xl font-semibold">{booking.name}</p>
+      <p className="mb-4 text-muted">
+        {booking.serviceName} · {booking.durationMinutes} min
+      </p>
+      <BookingActions booking={booking} />
+    </section>
+  );
+}
+
+function EntryList({ entries }: { entries: Entry[] }) {
+  return (
+    <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-card">
+      {entries.map((e) =>
+        e.kind === 'booking' ? (
+          <BookingRow key={e.booking.id} booking={e.booking} />
+        ) : (
+          <li
+            key={`${e.kind}-${e.start}`}
+            className="flex min-h-12 items-center gap-3 bg-cream/60 px-4 py-2 text-sm text-muted"
+          >
+            <span className="w-14 shrink-0 font-semibold tabular-nums">{minutesToTime(e.start)}</span>
+            {e.kind === 'break' ? (
+              <Coffee aria-hidden size={16} />
+            ) : (
+              <Lock aria-hidden size={16} />
+            )}
+            <span className="caps text-xs font-medium">{e.kind === 'break' ? 'Break' : 'Blocked'}</span>
+            <span className="ml-auto tabular-nums">until {minutesToTime(e.end)}</span>
+          </li>
+        ),
+      )}
+    </ul>
+  );
+}
+
+/** A compact line that opens to show the details and actions. */
+function BookingRow({ booking }: { booking: AdminBooking }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className={booking.status === 'cancelled' ? 'opacity-60' : ''}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left hover:bg-cream/50"
+      >
+        <span className="w-14 shrink-0">
+          <span className="caps block font-semibold tabular-nums">{booking.startTime}</span>
+          <span className="block text-xs text-muted tabular-nums">{minutesToTime(endOf(booking))}</span>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-semibold">{booking.name}</span>
+          <span className="block truncate text-sm text-muted">{booking.serviceName}</span>
+        </span>
+        <StatusChip status={booking.status} />
+        <ChevronDown
+          aria-hidden
+          size={18}
+          className={`shrink-0 text-muted transition ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="border-t border-dashed border-line px-4 pb-4 pt-3">
+          <BookingDetails booking={booking} />
+          <div className="mt-3">
+            <BookingActions booking={booking} />
+          </div>
+        </div>
+      )}
+    </li>
   );
 }

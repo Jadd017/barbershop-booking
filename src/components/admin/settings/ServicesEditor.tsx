@@ -1,6 +1,7 @@
-import { MAX_SERVICE_MINUTES, SLOT_MINUTES } from '../../../config';
+import { MAX_PRICE, MAX_SERVICE_MINUTES, SLOT_MINUTES } from '../../../config';
 import type { Service } from '../../../types';
-import { inputClass, Section, smallButtonClass } from './fields';
+import { buttonDangerOutline, inputBase } from '../../ui';
+import { cardClass, Section, smallButtonClass } from './fields';
 
 const DURATIONS = Array.from(
   { length: MAX_SERVICE_MINUTES / SLOT_MINUTES },
@@ -22,14 +23,20 @@ export function ServicesEditor({ services, onChange }: Props) {
     onChange(services.map((s, i) => (i === index ? service : s)));
   }
 
+  /** An empty field removes the price; anything else is checked by settingsErrors. */
+  function setPrice(index: number, value: string) {
+    const { price: _old, ...rest } = services[index];
+    setService(index, value === '' ? rest : { ...rest, price: Number(value) });
+  }
+
   return (
     <Section
       title="Services"
-      description="Removing or changing a service doesn't affect bookings already made."
+      description="Prices are optional and only shown to customers. Removing or changing a service doesn't affect bookings already made."
     >
       <ul className="grid gap-3">
         {services.map((service, i) => (
-          <li key={service.id} className="rounded-2xl border border-neutral-200 bg-white p-4">
+          <li key={service.id} className={cardClass}>
             <label className="block">
               <span className="mb-1 block text-sm font-medium">Name</span>
               <input
@@ -37,7 +44,7 @@ export function ServicesEditor({ services, onChange }: Props) {
                 value={service.name}
                 maxLength={40}
                 onChange={(e) => setService(i, { ...service, name: e.target.value })}
-                className={`${inputClass} w-full`}
+                className={`${inputBase} w-full`}
               />
             </label>
             <div className="mt-3 flex items-end gap-2">
@@ -48,7 +55,7 @@ export function ServicesEditor({ services, onChange }: Props) {
                   onChange={(e) =>
                     setService(i, { ...service, durationMinutes: Number(e.target.value) })
                   }
-                  className={`${inputClass} w-full`}
+                  className={`${inputBase} w-full`}
                 >
                   {DURATIONS.map((d) => (
                     <option key={d} value={d}>
@@ -57,14 +64,30 @@ export function ServicesEditor({ services, onChange }: Props) {
                   ))}
                 </select>
               </label>
-              <button
-                type="button"
-                onClick={() => onChange(services.filter((_, j) => j !== i))}
-                className="rounded-xl border border-red-300 bg-white px-4 py-3 text-sm font-semibold text-red-700"
-              >
-                Remove
-              </button>
+              <label className="w-28 shrink-0">
+                <span className="mb-1 block text-sm font-medium">
+                  Price <span className="font-normal text-muted">($)</span>
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  max={MAX_PRICE}
+                  step={0.5}
+                  placeholder="None"
+                  value={service.price === undefined || Number.isNaN(service.price) ? '' : service.price}
+                  onChange={(e) => setPrice(i, e.target.value)}
+                  className={`${inputBase} w-full tabular-nums`}
+                />
+              </label>
             </div>
+            <button
+              type="button"
+              onClick={() => onChange(services.filter((_, j) => j !== i))}
+              className={`${buttonDangerOutline} mt-3 w-full text-sm`}
+            >
+              Remove {service.name.trim() || 'service'}
+            </button>
           </li>
         ))}
       </ul>

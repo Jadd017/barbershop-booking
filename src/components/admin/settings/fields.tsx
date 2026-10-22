@@ -2,12 +2,16 @@ import type { ReactNode } from 'react';
 import { SLOT_MINUTES } from '../../../config';
 import { minutesToTime } from '../../../lib/time';
 import type { TimeString } from '../../../types';
+import { buttonOutline, inputBase } from '../../ui';
 
-export const inputClass =
-  'rounded-xl border border-neutral-300 bg-white px-3 py-3 outline-none focus:border-neutral-900';
+export const smallButtonClass = `${buttonOutline} text-sm`;
 
-export const smallButtonClass =
-  'rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-semibold hover:border-neutral-500 disabled:opacity-40';
+/** Remove / Unblock and the like: red text, still 44px tall. */
+export const removeButtonClass =
+  'inline-flex min-h-11 shrink-0 items-center px-1 text-sm font-semibold text-pole-red underline-offset-4 hover:underline';
+
+/** A white card inside a settings section. */
+export const cardClass = 'rounded-2xl border border-line bg-card p-4';
 
 /** Every time on the 15-min grid, 00:00 to 23:45. */
 const TIMES = Array.from({ length: (24 * 60) / SLOT_MINUTES }, (_, i) => minutesToTime(i * SLOT_MINUTES));
@@ -27,7 +31,7 @@ export function TimeSelect({
       aria-label={label}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`${inputClass} min-w-0 flex-1 tabular-nums`}
+      className={`${inputBase} min-w-0 flex-1 tabular-nums`}
     >
       {TIMES.map((t) => (
         <option key={t} value={t}>
@@ -49,8 +53,8 @@ export function Section({
 }) {
   return (
     <section className="mb-8">
-      <h2 className="text-lg font-bold">{title}</h2>
-      {description && <p className="mb-3 text-sm text-neutral-600">{description}</p>}
+      <h2 className="caps text-lg font-semibold">{title}</h2>
+      {description && <p className="mb-3 text-sm text-muted-strong">{description}</p>}
       <div className={description ? '' : 'mt-3'}>{children}</div>
     </section>
   );

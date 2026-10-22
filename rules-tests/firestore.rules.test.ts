@@ -924,6 +924,45 @@ describe('settings', () => {
     );
   });
 
+  it('Eddy can save prices, the shop address and a Maps link, or leave them empty', async () => {
+    await assertSucceeds(
+      save(
+        admin(),
+        valid({
+          services: [
+            { id: 'haircut', name: 'Haircut', durationMinutes: 30, price: 10 },
+            { id: 'beard', name: 'Beard', durationMinutes: 15, price: 7.5 },
+            { id: 's-1', name: 'Kids cut', durationMinutes: 15 },
+          ],
+          shopAddress: 'Hamra Street, Beirut',
+          mapsUrl: 'https://maps.app.goo.gl/abc123',
+        }),
+      ),
+    );
+    await assertSucceeds(save(admin(), valid({ shopAddress: '', mapsUrl: '' })));
+  });
+
+  it('settings saved before the address and Maps link existed can still be saved', async () => {
+    const { shopAddress: _a, mapsUrl: _m, ...older } = valid();
+    await assertSucceeds(save(admin(), older));
+  });
+
+  it('refused with a Maps link that is not https, or a bad or too long address', async () => {
+    await assertFails(save(admin(), valid({ mapsUrl: 'javascript:alert(1)' })));
+    await assertFails(save(admin(), valid({ mapsUrl: 'http://maps.google.com/x' })));
+    await assertFails(save(admin(), valid({ mapsUrl: 'https://maps.google.com/a b' })));
+    await assertFails(save(admin(), valid({ mapsUrl: `https://x.com/${'a'.repeat(500)}` })));
+    await assertFails(save(admin(), valid({ shopAddress: 'x'.repeat(201) })));
+    await assertFails(save(admin(), { ...valid(), shopAddress: 42 }));
+    await assertFails(save(admin(), { ...valid(), mapsUrl: null }));
+  });
+
+  it('customers can book a service with a price, and bookings never store it', async () => {
+    // DEFAULT_SETTINGS (seeded before each test) gives every service a price.
+    await assertFails(book(rami(), { fields: { price: 10 } }));
+    await assertSucceeds(book(rami()));
+  });
+
   it('nobody can delete them, not even Eddy', async () => {
     await assertFails(deleteDoc(doc(admin(), 'settings', 'shop')));
   });

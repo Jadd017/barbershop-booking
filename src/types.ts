@@ -8,6 +8,8 @@ export interface Service {
   id: string;
   name: string;
   durationMinutes: number;
+  /** In US dollars, shown to customers. Not set: no price shown. */
+  price?: number;
 }
 
 export interface TimeRange {
@@ -44,6 +46,10 @@ export interface Settings {
   specialPeriods: SpecialPeriod[];
   /** Dates the shop is closed, sorted. */
   daysOff: DateKey[];
+  /** Street address shown with "Get directions"; may be empty. */
+  shopAddress: string;
+  /** Google Maps link for "Get directions": https only (see lib/shop.ts), or empty. */
+  mapsUrl: string;
 }
 
 /** A time range Eddy blocked on one day (stored as blocked slot docs). */
@@ -71,6 +77,8 @@ export interface ConfirmedBooking {
   durationMinutes: number;
   date: DateKey;
   startTime: TimeString;
+  /** The service's price when booked, if it had one. Only shown, never stored in Firestore. */
+  price?: number;
 }
 
 export type BookingStatus = 'booked' | 'cancelled' | 'done' | 'no-show';

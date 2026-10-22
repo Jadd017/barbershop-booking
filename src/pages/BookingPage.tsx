@@ -1,11 +1,12 @@
+import { ArrowRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router';
-import { AccountLine } from '../components/AccountLine';
 import { BookingForm } from '../components/BookingForm';
 import { Confirmation } from '../components/Confirmation';
 import { DayPicker } from '../components/DayPicker';
 import { ServicePicker } from '../components/ServicePicker';
+import { ShopHeader } from '../components/ShopHeader';
 import { TimeGrid } from '../components/TimeGrid';
+import { buttonBrass, Notice, PageMessage, StepLabel } from '../components/ui';
 import {
   finishRedirectSignIn,
   isInAppBrowser,
@@ -18,8 +19,9 @@ import { useSettings } from '../hooks/useSettings';
 import { useStartTimes } from '../hooks/useStartTimes';
 import { clearLastBooking, loadLastBooking, saveLastBooking, type LastBooking } from '../lib/lastBooking';
 import { clearPendingBooking, loadPendingBooking, savePendingBooking } from '../lib/pendingBooking';
-import { bookableDays, weeklyHoursSummary } from '../lib/schedule';
-import { formatDayLong, toDateKey } from '../lib/time';
+import { weeklyHoursSummary, windowDays } from '../lib/schedule';
+import { formatPrice } from '../lib/shop';
+import { fromDateKey, minutesToTime, timeToMinutes, toDateKey } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
 import type { ConfirmedBooking, DateKey, TimeString } from '../types';
 
@@ -28,7 +30,9 @@ export function BookingPage() {
   // Live, so changes Eddy makes (hours, services, days off) show up straight away.
   const { settings, error: settingsError } = useSettings();
   const [today] = useState(() => toDateKey(new Date()));
-  const days = useMemo(() => (settings ? bookableDays(settings) : []), [settings]);
+  // Closed days are shown too, but only open ones (bookableDays) can be picked.
+  const allDays = useMemo(() => (settings ? windowDays(settings) : []), [settings]);
+  const days = useMemo(() => allDays.filter((d) => d.open).map((d) => d.date), [allDays]);
 
   // The choice made before a redirect sign-in, which reloaded the page.
   const [pending] = useState(loadPendingBooking);
@@ -123,6 +127,8 @@ export function BookingPage() {
       <Confirmation
         booking={confirmed.booking}
         barberName={confirmed.barberName}
+        mapsUrl={settings?.mapsUrl ?? ''}
+        shopAddress={settings?.shopAddress ?? ''}
         onDone={bookAnother}
       />
     );
@@ -130,102 +136,110 @@ export function BookingPage() {
 
   if (settingsError) {
     return (
-      <p className="p-6 text-center text-red-600">
-        Couldn't load the booking page. Check your connection and refresh.
-      </p>
+      <PageMessage error>Couldn't load the booking page. Check your connection and refresh.</PageMessage>
     );
   }
 
-  if (settings === undefined) {
-    return <p className="p-6 text-center text-neutral-500">Loading…</p>;
-  }
+  if (settings === undefined) return <PageMessage>Loading…</PageMessage>;
 
-  if (settings === null) {
-    return <p className="p-6 text-center text-neutral-500">Online booking opens soon.</p>;
-  }
+  if (settings === null) return <PageMessage>Online booking opens soon.</PageMessage>;
+
+  const end = selectedTime && service
+    ? minutesToTime(timeToMinutes(selectedTime) + service.durationMinutes)
+    : null;
 
   return (
-    <div className="mx-auto min-h-screen max-w-xl px-4 pb-40 pt-8">
-      <header className="mb-8">
-        <h1 className="text-2xl font-bold">Book with {settings.barberName}</h1>
-        <ul className="text-sm text-neutral-500">
-          {weeklyHoursSummary(settings).map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-        <Link to="/my-bookings" className="mt-2 inline-block text-sm font-medium underline">
-          My bookings
-        </Link>
-        {customer && (
-          <div className="mt-1">
-            <AccountLine customer={customer} onSignOut={signOut} />
-          </div>
-        )}
-      </header>
+    <div className="min-h-screen pb-44">
+      <ShopHeader
+        barberName={settings.barberName}
+        settings={settings}
+        today={today}
+        customer={customer}
+        onSignOut={signOut}
+      />
 
-      <section className="mb-8">
-        <h2 className="mb-3 font-semibold">1. Choose a service</h2>
-        <ServicePicker services={settings.services} selectedId={serviceId} onSelect={selectService} />
-      </section>
+      <main className="mx-auto max-w-xl px-4 pt-6">
+        <section className="mb-8">
+          <StepLabel step={1}>Service</StepLabel>
+          <ServicePicker services={settings.services} selectedId={serviceId} onSelect={selectService} />
+        </section>
 
-      {service && (
-        <>
-          <section className="mb-8">
-            <h2 className="mb-3 font-semibold">2. Choose a day</h2>
-            {days.length > 0 ? (
-              <DayPicker days={days} today={today} selected={day} onSelect={selectDay} />
-            ) : (
-              <p className="text-sm text-neutral-500">No days open for booking right now.</p>
-            )}
-          </section>
-
-          {days.length > 0 && (
-            <section>
-              <h2 className="mb-3 font-semibold">3. Choose a time</h2>
-              {slotsError ? (
-                <p className="text-sm text-red-600">
-                  Couldn't load available times. Check your connection and refresh.
-                </p>
-              ) : startTimes ? (
-                <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
+        {service && (
+          <>
+            <section className="mb-8">
+              <StepLabel step={2}>Day</StepLabel>
+              {days.length > 0 ? (
+                <DayPicker days={allDays} today={today} selected={day} onSelect={selectDay} />
               ) : (
-                <p className="text-sm text-neutral-500">Loading times…</p>
+                <p className="text-sm text-muted-strong">No days open for booking right now.</p>
               )}
             </section>
-          )}
-        </>
-      )}
 
-      {service && selectedTime && !formOpen && (
-        <div className="fixed inset-x-0 bottom-0 border-t border-neutral-200 bg-white/95 backdrop-blur">
+            {days.length > 0 && (
+              <section className="mb-8">
+                <StepLabel step={3}>Time</StepLabel>
+                {slotsError ? (
+                  <Notice tone="error">
+                    Couldn't load available times. Check your connection and refresh.
+                  </Notice>
+                ) : startTimes ? (
+                  <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
+                ) : (
+                  <p className="text-sm text-muted-strong">Loading times…</p>
+                )}
+              </section>
+            )}
+          </>
+        )}
+
+        <section className="border-t border-line pt-5 text-sm text-muted-strong">
+          <h2 className="caps mb-1 text-xs font-semibold text-ink">Opening hours</h2>
+          <ul>
+            {weeklyHoursSummary(settings).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          {settings.shopAddress && <p className="mt-2">{settings.shopAddress}</p>}
+        </section>
+      </main>
+
+      {service && selectedTime && end && !formOpen && (
+        <div className="fixed inset-x-0 bottom-0 z-10 bg-charcoal pb-[env(safe-area-inset-bottom)] text-cream shadow-[0_-4px_16px_rgba(0,0,0,0.25)]">
           {(signInError || (!customer && isInAppBrowser())) && (
-            <p role="alert" className="mx-auto max-w-xl px-4 pt-3 text-sm text-red-700">
+            <p role="alert" className="mx-auto max-w-xl px-4 pt-3 text-sm text-brass-light">
               {signInError ??
                 "Google sign-in may not work inside this app. If it fails, open this page in Chrome or Safari."}
             </p>
           )}
-          <div className="mx-auto flex max-w-xl items-center justify-between gap-4 px-4 py-4">
-            <div className="text-sm">
-              <p className="font-semibold">
-                {service.name} · {service.durationMinutes} min
+          <div className="mx-auto flex max-w-xl items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0 text-sm">
+              <p className="truncate font-semibold">
+                {service.name}
+                {service.price !== undefined && (
+                  <span className="text-brass-light"> · {formatPrice(service.price)}</span>
+                )}
               </p>
-              <p className="text-neutral-600">
-                {formatDayLong(day)} at {selectedTime}
+              <p className="text-line">
+                {fromDateKey(day).toLocaleDateString('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                })}{' '}
+                · <span className="tabular-nums">{selectedTime}–{end}</span>
               </p>
-            </div>
-            <div className="shrink-0 text-center">
-              <button
-                type="button"
-                onClick={handleConfirm}
-                disabled={signingIn || customer === undefined}
-                className="rounded-xl bg-neutral-900 px-5 py-3 font-semibold text-white hover:bg-neutral-700 disabled:opacity-60"
-              >
-                {signingIn ? 'Signing in…' : 'Confirm'}
-              </button>
               {customer === null && (
-                <p className="mt-1 text-xs text-neutral-500">Sign in with Google next</p>
+                <p className="text-xs text-line">You'll sign in with Google next</p>
               )}
             </div>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              disabled={signingIn || customer === undefined}
+              className={`${buttonBrass} caps shrink-0 px-5 text-base`}
+            >
+              {signingIn ? 'Signing in…' : 'Book now'}
+              {!signingIn && <ArrowRight aria-hidden size={18} />}
+            </button>
           </div>
         </div>
       )}
