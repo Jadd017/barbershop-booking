@@ -25,9 +25,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Keep in sync with ADMIN_UID in src/config.ts.
+    // Keep in sync with ADMIN_UID in src/config.ts. Eddy signs in with email/password only: if
+    // Google (or anything else) were ever linked to his account, that sign-in isn't admin.
+    // The UID is checked first, so customers' writes don't pay for the second check.
     function isAdmin() {
-      return request.auth != null && request.auth.uid == 'HHBoRoG4jphMLu2OjKpYTGJTKd42';
+      return request.auth != null && request.auth.uid == 'HHBoRoG4jphMLu2OjKpYTGJTKd42'
+        && request.auth.token.firebase.sign_in_provider == 'password';
     }
 
     // A customer signed in with Google (not Eddy's email account, nor any other sign-in method).

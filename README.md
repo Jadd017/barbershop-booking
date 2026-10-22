@@ -90,15 +90,20 @@ opens `/admin`. Until then the booking page says booking opens soon.
   double-book. Eddy can only change a booking's status, not move it or revive a cancelled one.
 - Anyone can read `settings/shop`; only Eddy can write it, and its shape is checked.
 - Blocked times are slot docs only Eddy can create or delete.
-- `customers/{uid}` keeps the last name and phone for pre-filling; only that customer and Eddy can read it.
+- `customers/{uid}` keeps the last name and phone for pre-filling; only that customer and Eddy can
+  read it, only that customer can write it, and nobody can list or delete them.
+- Eddy is his UID *and* an email/password sign-in: if Google were ever linked to his account,
+  that sign-in gets no admin rights.
 
 `ADMIN_UID` and the limits in `src/config.ts` (60-min services, 2 breaks a day, 4 special
 periods, 60-day window) are copied into the rules; keep them in sync.
 
 Firestore stops evaluating a write after 1000 expressions, and a customer booking uses a lot of
 them. That's why `settings/shop` stores times as minutes and special periods as day numbers, and
-why the rules compute shared values once. The "heaviest valid booking" test fails if a change
-pushes the worst case over the limit.
+why the rules compute shared values once. The "heaviest valid booking" tests measure the worst
+case at about 820 expressions and fail if a change eats into the remaining ~15%. The booking also
+reads up to 9 documents, against a limit of 10 per write that the emulator doesn't check, so
+don't add a `get()` to customer bookings.
 
 ```bash
 npm run test:rules   # rules + data layer tests in the Firestore emulator (needs Java 21+)
@@ -122,5 +127,45 @@ out in the same command so they always match the code.
   `index.html`, the app's routes and the favicon are sent with `no-cache` (always revalidated),
   so the next visit after a deploy loads the new version.
 
+- **Security headers** (`firebase.json`, every path): a Content-Security-Policy that allows only
+  this site's own scripts plus Google's sign-in helper (`apis.google.com`) and reCAPTCHA, and
+  only Firebase's APIs for requests; `frame-ancestors 'self'` and `X-Frame-Options` so other
+  sites can't frame the page; `nosniff`, `Referrer-Policy`, HSTS and a `Permissions-Policy`.
+  Hosting doesn't add them to its own `/__/auth/*` pages, so they can't break Google sign-in.
+  If something new is blocked, the browser console says which directive to extend.
+
 `npx firebase emulators:start --only hosting` serves `dist` at http://127.0.0.1:5050 with the
-same rewrites. The emulator doesn't apply the cache headers.
+same rewrites. The emulator doesn't apply the cache or security headers.
+
+## App Check
+
+`src/data/firebase.ts` starts [App Check](https://firebase.google.com/docs/app-check) with
+reCAPTCHA Enterprise (free up to 10,000 checks a month, far above this site's traffic): each
+visitor's browser gets a token proving it's running this site, and once enforcement is on,
+Firestore refuses requests without one. Scripts that copy the public API key get nothing.
+It's off while `VITE_RECAPTCHA_ENTERPRISE_KEY` is empty.
+
+Setup, in this order:
+
+1. **Google Cloud console** (project `eddy-barbershop`) → search "reCAPTCHA" → enable the API if
+   asked → **Create key**: type **Website**, domains `eddy-barbershop.web.app` and
+   `eddy-barbershop.firebaseapp.com` (not `localhost`), **Use checkbox challenge off**.
+   Copy the key ID.
+2. **Firebase console** → **App Check** → **Apps** → the web app → **reCAPTCHA Enterprise** →
+   paste the key → **Save**.
+3. Put the key in `.env.production` and `.env.local` as `VITE_RECAPTCHA_ENTERPRISE_KEY`.
+4. **Localhost:** App Check → Apps → ⋮ next to the web app → **Manage debug tokens** → **Add** →
+   **Generate**, then put it in `.env.local` as `VITE_APPCHECK_DEBUG_TOKEN` and restart
+   `npm run dev`. It's a secret; never commit it. Only `npm run dev` uses it.
+5. Deploy, then use the live site (book, cancel, Eddy's dashboard and settings) on a phone and a
+   computer. Under App Check → **APIs** → **Cloud Firestore**, requests should show as verified.
+6. Only then: App Check → APIs → Cloud Firestore → **Enforce**. It takes effect within ~15 min;
+   **Unenforce** undoes it.
+
+## Browser API key
+
+The `VITE_FIREBASE_API_KEY` is public by design (it's in the page); the rules and App Check are
+what protect the data. Still, restrict it: Google Cloud console → **APIs & Services** →
+**Credentials** → the "Browser key (auto created by Firebase)" → **Application restrictions:
+Websites** → `https://eddy-barbershop.web.app/*`, `https://eddy-barbershop.firebaseapp.com/*`,
+`http://localhost:5173/*` → **Save**.

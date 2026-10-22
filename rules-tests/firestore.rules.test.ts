@@ -52,14 +52,29 @@ type CustomerInfo = typeof RAMI;
 const TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TIME_ZONE }).format(new Date());
 const TOMORROW = addDays(TODAY, 1);
 
+const RULES = readFileSync('firestore.rules', 'utf8');
+
 let env: RulesTestEnvironment;
 
+function startEnv(rules = RULES) {
+  return initializeTestEnvironment({ projectId: 'eddy-barbershop', firestore: { rules } });
+}
+
 beforeAll(async () => {
-  env = await initializeTestEnvironment({
-    projectId: 'eddy-barbershop',
-    firestore: { rules: readFileSync('firestore.rules', 'utf8') },
-  });
+  env = await startEnv();
 });
+
+/** Runs `fn` with `rules` loaded instead of firestore.rules, keeping the data. */
+async function withRules(rules: string, fn: () => Promise<unknown>) {
+  await env.cleanup();
+  env = await startEnv(rules);
+  try {
+    await fn();
+  } finally {
+    await env.cleanup();
+    env = await startEnv();
+  }
+}
 
 afterAll(() => env.cleanup());
 
@@ -699,6 +714,19 @@ describe('customer profiles (pre-filled name and phone)', () => {
     await assertSucceeds(getDoc(doc(admin(), 'customers', RAMI.uid)));
   });
 
+  it("nobody can delete it or list everyone's, and Eddy can't change it", async () => {
+    await assertSucceeds(setDoc(doc(rami(), 'customers', RAMI.uid), profile()));
+    await assertFails(setDoc(doc(admin(), 'customers', RAMI.uid), profile()));
+    await assertFails(updateDoc(doc(admin(), 'customers', RAMI.uid), { name: 'Someone' }));
+    await assertFails(deleteDoc(doc(sara(), 'customers', RAMI.uid)));
+    await assertFails(deleteDoc(doc(admin(), 'customers', RAMI.uid)));
+    await assertFails(getDocs(collection(admin(), 'customers')));
+  });
+
+  it('an email/password account cannot save one, even under its own UID', async () => {
+    await assertFails(setDoc(doc(passwordUser(), 'customers', RAMI.uid), profile()));
+  });
+
   it('refused with a bad name, phone, timestamp or extra field', async () => {
     const ref = () => doc(rami(), 'customers', RAMI.uid);
     await assertFails(setDoc(ref(), { ...profile(), name: 'R' }));
@@ -717,6 +745,35 @@ describe('slots', () => {
 });
 
 describe('Eddy (admin)', () => {
+  /** Eddy's UID, but signed in with Google (if Google were ever linked to his account). */
+  const eddyViaGoogle = () =>
+    env
+      .authenticatedContext(ADMIN_UID, {
+        email: 'eddy@gmail.com',
+        firebase: { sign_in_provider: 'google.com' },
+      })
+      .firestore() as unknown as Firestore;
+
+  it("is only Eddy when signed in with email/password, not Google on the same account", async () => {
+    await seed();
+    await assertSucceeds(getDoc(doc(admin(), 'bookings', 'ABC234')));
+    await assertFails(getDoc(doc(eddyViaGoogle(), 'bookings', 'ABC234')));
+    await assertFails(
+      getDocs(query(collection(eddyViaGoogle(), 'bookings'), where('date', '==', TOMORROW))),
+    );
+    await assertFails(updateDoc(doc(eddyViaGoogle(), 'bookings', 'ABC234'), { status: 'done' }));
+    await assertFails(
+      setDoc(doc(eddyViaGoogle(), 'settings', 'shop'), {
+        ...toSettingsDoc(DEFAULT_SETTINGS),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      setDoc(doc(eddyViaGoogle(), 'slots', slotId(TOMORROW, '12:00')), { date: TOMORROW, blocked: true }),
+    );
+    await assertFails(getDoc(doc(eddyViaGoogle(), 'phoneLimits', `${PHONE}_1`)));
+  });
+
   it('can mark a booking done or no-show, and undo it', async () => {
     await seed();
     const ref = () => doc(admin(), 'bookings', 'ABC234');
@@ -1070,9 +1127,9 @@ describe('booking window', () => {
     await assertFails(book(rami(), { date: addDays(TODAY, 5) }));
   });
 
-  // Firestore stops evaluating a write after 1000 expressions; this is the most work a valid
-  // customer booking makes the rules do.
-  it('the heaviest valid booking still fits within the rules evaluation limit', async () => {
+  // Firestore stops evaluating a write after 1000 expressions or 10 document reads (get,
+  // getAfter, exists); this is the most work a valid customer booking makes the rules do.
+  async function heaviestBooking() {
     const date = addDays(TODAY, 5);
     const color = { id: 's-color', name: 'Color', durationMinutes: 60 };
     const later = { name: 'Later', start: addDays(TODAY, 20), end: addDays(TODAY, 30), daysAhead: 30 };
@@ -1086,12 +1143,72 @@ describe('booking window', () => {
           { start: '14:00', end: '15:00' },
         ],
       }),
-      daysOff: Array.from({ length: 60 }, (_, i) => addDays(TODAY, 10 + i)),
+      // A year of past days off (never cleaned up) and 60 upcoming: `in` costs the same either way.
+      daysOff: Array.from({ length: 435 }, (_, i) => addDays(TODAY, -365 + i)).filter(
+        (d) => d < TODAY || d >= addDays(TODAY, 10),
+      ),
     });
     await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
-    await assertSucceeds(
-      book(rami(), { code: 'CCC444', date, service: color, time: '16:00', seat: 2, accountSeat: 2 }),
+    return book(rami(), { code: 'CCC444', date, service: color, time: '16:00', seat: 2, accountSeat: 2 });
+  }
+
+  /** firestore.rules with `extra` checked first in every customer booking, after `functions`. */
+  function rulesWithExtra(extra: string, functions = '') {
+    const start = '      return b.serviceId in s.services';
+    if (!RULES.includes(start)) throw new Error('customerBookingAllowed changed; update this test');
+    return RULES.replace(start, `      return ${extra} && b.serviceId in s.services`).replace(
+      '    function customerBookingAllowed',
+      `${functions}\n    function customerBookingAllowed`,
     );
+  }
+
+  // Padding: p() costs about 8 expressions (about 125 of them fit in 1000), g() is 10 of them.
+  const PADDING = `
+    function p() { return 1 + 1 == 2; }
+    function g() { return ${Array(10).fill('p()').join(' && ')}; }`;
+  const padding = (k: number) =>
+    [...Array(Math.floor(k / 10)).fill('g()'), ...Array(k % 10).fill('p()')].join(' && ');
+
+  /** `n` extra document reads (of documents that don't exist, which still count). */
+  const reads = (n: number) =>
+    Array.from({ length: n }, (_, i) => `!exists(/databases/$(database)/documents/pad/p${i})`).join(' && ');
+
+  it('the heaviest valid booking still fits within the rules evaluation limit', async () => {
+    await assertSucceeds(heaviestBooking());
+  });
+
+  // Measured: 22 p() calls fit on top of the heaviest booking and 23 don't, so it uses roughly
+  // 820 of the 1000 expressions. A change that adds work to customer bookings must keep this
+  // passing.
+  it('the heaviest valid booking leaves about 15% of the expression limit spare', async () => {
+    await withRules(rulesWithExtra(padding(18), PADDING), async () => {
+      await assertSucceeds(heaviestBooking());
+    });
+  });
+
+  it('(the emulator does enforce the expression limit, so the test above means something)', async () => {
+    const rules = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+${PADDING}
+    match /x/{id} { allow get: if ${padding(110)}; }
+    match /y/{id} { allow get: if ${padding(140)}; }
+  }
+}`;
+    await withRules(rules, async () => {
+      await assertSucceeds(getDoc(doc(anyone(), 'x', 'a')));
+      await assertFails(getDoc(doc(anyone(), 'y', 'a')));
+    });
+  });
+
+  // A batch may read 20 documents in all, which the emulator checks (10 extra here fail).
+  // Production also caps each write at 10, which the emulator doesn't check: the booking itself
+  // reads at most 9 (settings, 4 slots, 2 phone seats, 2 account seats), fixed by the rules'
+  // shape rather than by data. Adding a read to validCustomerBooking would break bookings.
+  it('the heaviest valid booking leaves room in the batch document-read limit', async () => {
+    await withRules(rulesWithExtra(reads(8)), async () => {
+      await assertSucceeds(heaviestBooking());
+    });
   });
 
   it('a special period still respects days off', async () => {
