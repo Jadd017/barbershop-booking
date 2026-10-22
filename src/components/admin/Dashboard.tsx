@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { getSettings, subscribeBookings } from '../../data/api';
+import { Link } from 'react-router';
+import { subscribeBookings } from '../../data/api';
+import { useSettings } from '../../hooks/useSettings';
 import { addDays, formatDayLong, toDateKey } from '../../lib/time';
-import type { AdminBooking, DateKey, Settings } from '../../types';
+import type { AdminBooking, DateKey } from '../../types';
 import { AddBookingSheet } from './AddBookingSheet';
 import { BookingCard } from './BookingCard';
 
@@ -12,12 +14,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [bookings, setBookings] = useState<{ date: DateKey; items: AdminBooking[] } | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const { settings } = useSettings();
   const [adding, setAdding] = useState(false);
-
-  useEffect(() => {
-    getSettings().then(setSettings);
-  }, []);
 
   useEffect(() => {
     return subscribeBookings(
@@ -42,9 +40,14 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     <div className="mx-auto min-h-screen max-w-xl bg-neutral-50 px-4 pb-28 pt-6">
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">Bookings</h1>
-        <button type="button" onClick={onLogout} className="text-sm font-medium underline">
-          Log out
-        </button>
+        <div className="flex items-center gap-4">
+          <Link to="/admin/settings" className="text-sm font-medium underline">
+            Settings
+          </Link>
+          <button type="button" onClick={onLogout} className="text-sm font-medium underline">
+            Log out
+          </button>
+        </div>
       </header>
 
       <div className="mb-2 flex items-center gap-2">

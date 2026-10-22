@@ -1,11 +1,7 @@
 import { SLOT_MINUTES } from '../config';
 import type { DateKey, Settings, StartTimeOption, TimeString } from '../types';
+import { fitsHours, hoursOn } from './schedule';
 import { minutesToTime, timeToMinutes, toDateKey } from './time';
-
-/** True if [aStart, aEnd) and [bStart, bEnd) overlap. */
-function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
-  return aStart < bEnd && bStart < aEnd;
-}
 
 /** Every grid slot a service of `durationMinutes` starting at `start` occupies. */
 export function slotsNeeded(start: TimeString, durationMinutes: number): TimeString[] {
@@ -25,11 +21,12 @@ export function isPast(date: DateKey, start: TimeString, now: Date = new Date())
 }
 
 /**
- * Lists every start time on the slot grid during working hours (break excluded)
+ * Lists every start time on the slot grid during that day's hours (breaks excluded)
  * and marks whether a service of `durationMinutes` can start there.
+ * Empty when the shop is closed on `date`.
  *
  * A start time is available only if every slot the service needs is
- * within working hours, outside the break, not taken, and not in the past.
+ * within working hours, outside the breaks, not taken (booked or blocked), and not in the past.
  */
 export function getStartTimes(
   date: DateKey,
@@ -38,21 +35,22 @@ export function getStartTimes(
   takenSlots: ReadonlySet<TimeString>,
   now: Date = new Date(),
 ): StartTimeOption[] {
-  const open = timeToMinutes(settings.workingHours.start);
-  const close = timeToMinutes(settings.workingHours.end);
-  const breakStart = timeToMinutes(settings.breakTime.start);
-  const breakEnd = timeToMinutes(settings.breakTime.end);
+  const hours = hoursOn(settings, date);
+  if (!hours) return [];
+  const open = timeToMinutes(hours.start);
+  const close = timeToMinutes(hours.end);
 
   const options: StartTimeOption[] = [];
   for (let start = open; start < close; start += SLOT_MINUTES) {
-    // The shop is closed during the break, so don't list those times at all.
-    if (start >= breakStart && start < breakEnd) continue;
+    // The shop is closed during breaks, so don't list those times at all.
+    const inBreak = hours.breaks.some(
+      (b) => start >= timeToMinutes(b.start) && start < timeToMinutes(b.end),
+    );
+    if (inBreak) continue;
 
     const time = minutesToTime(start);
-    const end = start + durationMinutes;
     const available =
-      end <= close &&
-      !overlaps(start, end, breakStart, breakEnd) &&
+      fitsHours(settings, date, time, durationMinutes) &&
       !slotsNeeded(time, durationMinutes).some((slot) => takenSlots.has(slot)) &&
       !isPast(date, time, now);
 

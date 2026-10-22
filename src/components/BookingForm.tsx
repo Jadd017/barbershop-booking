@@ -8,6 +8,7 @@ import {
 import {
   createBooking,
   getCustomerProfile,
+  NotBookableError,
   SignInRequiredError,
   SlotTakenError,
   TimePassedError,
@@ -84,6 +85,9 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
       } else if (err instanceof TimePassedError) {
         setSlotLost(true);
         setSubmitError('Sorry, this time has already passed, please pick another.');
+      } else if (err instanceof NotBookableError) {
+        setSlotLost(true);
+        setSubmitError('Sorry, this time is no longer available, please pick another.');
       } else if (err instanceof TooManyBookingsError) {
         setSubmitError(
           err.limitedBy === 'account'

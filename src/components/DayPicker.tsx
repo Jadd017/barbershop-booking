@@ -3,14 +3,15 @@ import type { DateKey } from '../types';
 
 interface Props {
   days: DateKey[];
+  today: DateKey;
   selected: DateKey;
   onSelect: (day: DateKey) => void;
 }
 
-export function DayPicker({ days, selected, onSelect }: Props) {
+export function DayPicker({ days, today, selected, onSelect }: Props) {
   return (
     <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-      {days.map((day, i) => {
+      {days.map((day) => {
         const { weekday, day: date } = formatDayShort(day);
         const isSelected = day === selected;
         return (
@@ -26,7 +27,7 @@ export function DayPicker({ days, selected, onSelect }: Props) {
             }`}
           >
             <span className="text-xs uppercase tracking-wide opacity-70">
-              {i === 0 ? 'Today' : weekday}
+              {day === today ? 'Today' : weekday}
             </span>
             <span className="font-semibold">{date}</span>
           </button>

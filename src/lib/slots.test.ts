@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Settings, TimeString } from '../types';
+import { DEFAULT_SETTINGS } from './settingsDoc';
 import { getStartTimes, isPast, slotsNeeded } from './slots';
 
-const settings: Settings = {
-  barberName: 'Eddy',
-  workingHours: { start: '10:00', end: '20:00' },
-  breakTime: { start: '14:00', end: '15:00' },
-  services: [],
-};
+// Every day 10:00–20:00 with a break 14:00–15:00.
+const settings: Settings = DEFAULT_SETTINGS;
 
 const DAY = '2026-10-22';
 /** The day before DAY, so nothing on DAY counts as past. */
@@ -122,5 +119,41 @@ describe('isPast', () => {
     expect(isPast('2026-10-22', '12:30', now)).toBe(true);
     expect(isPast('2026-10-22', '12:45', now)).toBe(false);
     expect(isPast('2026-10-23', '10:00', now)).toBe(false);
+  });
+});
+
+describe('getStartTimes: per-day hours', () => {
+  // DAY (2026-10-22) is a Thursday.
+  const withThursday = (thursday: Settings['weeklyHours'][number]): Settings => ({
+    ...settings,
+    weeklyHours: settings.weeklyHours.map((d, i) => (i === 3 ? thursday : d)),
+  });
+
+  it("uses that weekday's hours and both breaks", () => {
+    const s = withThursday({
+      closed: false,
+      start: '09:00',
+      end: '13:00',
+      breaks: [
+        { start: '10:00', end: '10:30' },
+        { start: '11:30', end: '12:00' },
+      ],
+    });
+    const options = getStartTimes(DAY, 30, s, new Set(), EARLIER);
+    const a = new Map(options.map((o) => [o.time, o.available]));
+    expect(a.get('09:00')).toBe(true);
+    expect(a.get('09:45')).toBe(false); // runs into the first break
+    expect(a.has('10:15')).toBe(false); // in the first break
+    expect(a.get('11:00')).toBe(true); // ends as the second break starts
+    expect(a.get('11:15')).toBe(false);
+    expect(a.get('12:30')).toBe(true); // ends at closing
+    expect(a.has('13:00')).toBe(false);
+  });
+
+  it('lists nothing on a closed weekday or a day off', () => {
+    const closed = withThursday({ ...settings.weeklyHours[3], closed: true });
+    expect(getStartTimes(DAY, 15, closed, new Set(), EARLIER)).toEqual([]);
+    const dayOff = { ...settings, daysOff: [DAY] };
+    expect(getStartTimes(DAY, 15, dayOff, new Set(), EARLIER)).toEqual([]);
   });
 });

@@ -2,14 +2,22 @@ import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { Dashboard } from '../components/admin/Dashboard';
 import { LoginForm } from '../components/admin/LoginForm';
+import { SettingsPage } from '../components/admin/settings/SettingsPage';
 import { ADMIN_UID } from '../config';
+import { ensureSettings } from '../data/api';
 import { auth } from '../data/firebase';
 
-export function AdminPage() {
+export function AdminPage({ view }: { view: 'bookings' | 'settings' }) {
   // undefined = still checking whether someone is signed in.
   const [user, setUser] = useState<User | null | undefined>(undefined);
 
   useEffect(() => onAuthStateChanged(auth, setUser), []);
+
+  // The first time Eddy signs in, settings/shop is created with the default hours and services.
+  const isAdmin = user?.uid === ADMIN_UID;
+  useEffect(() => {
+    if (isAdmin) ensureSettings().catch(console.error);
+  }, [isAdmin]);
 
   const logout = () => signOut(auth);
 
@@ -37,5 +45,5 @@ export function AdminPage() {
     );
   }
 
-  return <Dashboard onLogout={logout} />;
+  return view === 'settings' ? <SettingsPage onLogout={logout} /> : <Dashboard onLogout={logout} />;
 }

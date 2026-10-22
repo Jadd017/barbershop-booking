@@ -6,8 +6,6 @@ import { Confirmation } from '../components/Confirmation';
 import { DayPicker } from '../components/DayPicker';
 import { ServicePicker } from '../components/ServicePicker';
 import { TimeGrid } from '../components/TimeGrid';
-import { DAYS_TO_SHOW } from '../config';
-import { getSettings } from '../data/api';
 import {
   finishRedirectSignIn,
   isInAppBrowser,
@@ -16,24 +14,26 @@ import {
   signOutCustomer,
 } from '../data/auth';
 import { useCustomer } from '../hooks/useCustomer';
+import { useSettings } from '../hooks/useSettings';
 import { useStartTimes } from '../hooks/useStartTimes';
 import { clearLastBooking, loadLastBooking, saveLastBooking, type LastBooking } from '../lib/lastBooking';
 import { clearPendingBooking, loadPendingBooking, savePendingBooking } from '../lib/pendingBooking';
-import { formatDayLong, upcomingDateKeys } from '../lib/time';
+import { bookableDays, weeklyHoursSummary } from '../lib/schedule';
+import { formatDayLong, toDateKey } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
-import type { ConfirmedBooking, DateKey, Settings, TimeString } from '../types';
+import type { ConfirmedBooking, DateKey, TimeString } from '../types';
 
 export function BookingPage() {
-  const days = useMemo(() => upcomingDateKeys(DAYS_TO_SHOW), []);
   const customer = useCustomer();
+  // Live, so changes Eddy makes (hours, services, days off) show up straight away.
+  const { settings, error: settingsError } = useSettings();
+  const [today] = useState(() => toDateKey(new Date()));
+  const days = useMemo(() => (settings ? bookableDays(settings) : []), [settings]);
 
   // The choice made before a redirect sign-in, which reloaded the page.
   const [pending] = useState(loadPendingBooking);
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [serviceId, setServiceId] = useState<string | null>(pending?.serviceId ?? null);
-  const [day, setDay] = useState<DateKey>(
-    pending && days.includes(pending.day) ? pending.day : days[0],
-  );
+  const [chosenDay, setDay] = useState<DateKey | null>(pending?.day ?? null);
   const [time, setTime] = useState<TimeString | null>(pending?.time ?? null);
   const [formOpen, setFormOpen] = useState(false);
   // True until the restored choice is checked, then the form reopens if it's still free.
@@ -44,17 +44,15 @@ export function BookingPage() {
   const [confirmed, setConfirmed] = useState<LastBooking | null>(loadLastBooking);
 
   useEffect(() => {
-    getSettings().then(setSettings);
-  }, []);
-
-  useEffect(() => {
     finishRedirectSignIn().catch((err) => setSignInError(signInErrorMessage(err)));
     // Already restored above; acting on it again on a later reload would be a surprise.
     clearPendingBooking();
   }, []);
 
+  // Falls back to the first open day if the chosen one is no longer offered (e.g. Eddy closed it).
+  const day = chosenDay && days.includes(chosenDay) ? chosenDay : (days[0] ?? today);
   const service = settings?.services.find((s) => s.id === serviceId) ?? null;
-  const { startTimes, error: slotsError } = useStartTimes(day, service, settings);
+  const { startTimes, error: slotsError } = useStartTimes(day, service, settings ?? null);
 
   // If someone else books the selected time (or it passes), drop the selection.
   const selectedTime = startTimes?.some((o) => o.time === time && o.available) ? time : null;
@@ -130,18 +128,31 @@ export function BookingPage() {
     );
   }
 
-  if (!settings) {
+  if (settingsError) {
+    return (
+      <p className="p-6 text-center text-red-600">
+        Couldn't load the booking page. Check your connection and refresh.
+      </p>
+    );
+  }
+
+  if (settings === undefined) {
     return <p className="p-6 text-center text-neutral-500">Loading…</p>;
+  }
+
+  if (settings === null) {
+    return <p className="p-6 text-center text-neutral-500">Online booking opens soon.</p>;
   }
 
   return (
     <div className="mx-auto min-h-screen max-w-xl px-4 pb-40 pt-8">
       <header className="mb-8">
         <h1 className="text-2xl font-bold">Book with {settings.barberName}</h1>
-        <p className="text-sm text-neutral-500">
-          Open {settings.workingHours.start}–{settings.workingHours.end} · Break{' '}
-          {settings.breakTime.start}–{settings.breakTime.end}
-        </p>
+        <ul className="text-sm text-neutral-500">
+          {weeklyHoursSummary(settings).map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
         <Link to="/my-bookings" className="mt-2 inline-block text-sm font-medium underline">
           My bookings
         </Link>
@@ -161,21 +172,27 @@ export function BookingPage() {
         <>
           <section className="mb-8">
             <h2 className="mb-3 font-semibold">2. Choose a day</h2>
-            <DayPicker days={days} selected={day} onSelect={selectDay} />
-          </section>
-
-          <section>
-            <h2 className="mb-3 font-semibold">3. Choose a time</h2>
-            {slotsError ? (
-              <p className="text-sm text-red-600">
-                Couldn't load available times. Check your connection and refresh.
-              </p>
-            ) : startTimes ? (
-              <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
+            {days.length > 0 ? (
+              <DayPicker days={days} today={today} selected={day} onSelect={selectDay} />
             ) : (
-              <p className="text-sm text-neutral-500">Loading times…</p>
+              <p className="text-sm text-neutral-500">No days open for booking right now.</p>
             )}
           </section>
+
+          {days.length > 0 && (
+            <section>
+              <h2 className="mb-3 font-semibold">3. Choose a time</h2>
+              {slotsError ? (
+                <p className="text-sm text-red-600">
+                  Couldn't load available times. Check your connection and refresh.
+                </p>
+              ) : startTimes ? (
+                <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
+              ) : (
+                <p className="text-sm text-neutral-500">Loading times…</p>
+              )}
+            </section>
+          )}
         </>
       )}
 

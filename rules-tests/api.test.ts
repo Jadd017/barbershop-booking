@@ -14,8 +14,15 @@ import {
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_UID, SHOP_TIME_ZONE } from '../src/config';
+import { DEFAULT_SETTINGS } from '../src/lib/settingsDoc';
 import { addDays } from '../src/lib/time';
-import type { AdminBooking, BookingRequest, CustomerBooking } from '../src/types';
+import type {
+  AdminBooking,
+  BlockedTime,
+  BookingRequest,
+  CustomerBooking,
+  Settings,
+} from '../src/types';
 
 interface FakeUser {
   uid: string;
@@ -58,6 +65,9 @@ afterAll(() => env.cleanup());
 
 beforeEach(async () => {
   await env.clearFirestore();
+  // Created the way the site does it: the first time Eddy opens /admin.
+  actAsEddy();
+  await api.ensureSettings();
   actAsCustomer(RAMI);
 });
 
@@ -152,6 +162,26 @@ function takenSlots(): Promise<Set<string>> {
     );
   });
 }
+
+/** Resolves with the first result of an api subscribe function. */
+function first<T>(
+  subscribe: (onChange: (value: T) => void, onError: (error: Error) => void) => () => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const stop = subscribe((value) => {
+      stop();
+      resolve(value);
+    }, reject);
+  });
+}
+
+const settingsNow = () => first<Settings | null>(api.subscribeSettings);
+const blockedTimes = () =>
+  first<BlockedTime[]>((onChange, onError) => api.subscribeBlockedTimes(TODAY, onChange, onError));
+const upcoming = () =>
+  first<AdminBooking[]>((onChange, onError) =>
+    api.subscribeUpcomingBookings(TODAY, onChange, onError),
+  );
 
 describe('customer pages', () => {
   it('book, see it taken and under My bookings, cancel, and the time is free again', async () => {
@@ -291,5 +321,105 @@ describe('admin dashboard', () => {
     });
     const walkIns = snap.docs.filter((d) => d.get('customerUid') === null);
     expect(walkIns.map((d) => d.get('startTime')).sort()).toEqual(['15:00', '16:00', '17:00']);
+  });
+});
+
+describe('settings', () => {
+  it('are created with the defaults once, and everyone reads them', async () => {
+    actAsEddy();
+    await api.ensureSettings(); // already there: nothing changes
+    actSignedOut();
+    expect(await settingsNow()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('Eddy saves every kind of change and gets the same back; customers cannot save', async () => {
+    const changed: Settings = {
+      ...DEFAULT_SETTINGS,
+      weeklyHours: DEFAULT_SETTINGS.weeklyHours.map((d, i) =>
+        i === 6
+          ? { ...d, closed: true }
+          : {
+              ...d,
+              start: '09:30',
+              breaks: [
+                { start: '13:00', end: '13:45' },
+                { start: '17:00', end: '17:15' },
+              ],
+            },
+      ),
+      services: [
+        { id: 'beard', name: 'Beard trim', durationMinutes: 15 },
+        { id: 's-color', name: 'Color', durationMinutes: 60 },
+      ],
+      bookingWindowDays: 7,
+      specialPeriods: [{ name: 'Christmas', start: '2026-12-15', end: '2026-12-31', daysAhead: 14 }],
+      daysOff: ['2026-12-25'],
+    };
+    await expect(api.saveSettings(changed)).rejects.toMatchObject({ code: 'permission-denied' });
+
+    actAsEddy();
+    await api.saveSettings(changed);
+    actAsCustomer(RAMI);
+    expect(await settingsNow()).toEqual(changed);
+  });
+
+  it('booking a time Eddy has just closed gives NotBookableError', async () => {
+    actAsEddy();
+    await api.saveSettings({ ...DEFAULT_SETTINGS, daysOff: [TOMORROW] });
+    actAsCustomer(RAMI);
+    await expect(api.createBooking(request('11:00'))).rejects.toBeInstanceOf(api.NotBookableError);
+  });
+
+  it('a removed service gives NotBookableError, but bookings already made stay', async () => {
+    const booked = await api.createBooking(request('11:00'));
+    actAsEddy();
+    await api.saveSettings({
+      ...DEFAULT_SETTINGS,
+      services: DEFAULT_SETTINGS.services.filter((s) => s.id !== 'haircut'),
+    });
+    actAsCustomer(RAMI);
+    await expect(api.createBooking(request('16:00'))).rejects.toBeInstanceOf(api.NotBookableError);
+    expect((await myBookings()).map((b) => [b.bookingCode, b.status])).toEqual([
+      [booked.bookingCode, 'booked'],
+    ]);
+  });
+
+  it("Eddy's upcoming bookings list covers every day from today", async () => {
+    await api.createBooking(request('11:00', { date: addDays(TODAY, 3) }));
+    await api.createBooking(request('11:00'));
+    await expect(upcoming()).rejects.toMatchObject({ code: 'permission-denied' });
+    actAsEddy();
+    expect((await upcoming()).map((b) => b.date)).toEqual([TOMORROW, addDays(TODAY, 3)]);
+  });
+});
+
+describe('blocked times', () => {
+  it('block around a booking, customers see it taken, unblock frees only the blocked slots', async () => {
+    const beard = { id: 'beard', name: 'Beard', durationMinutes: 15 };
+    await api.createBooking(request('16:30', { service: beard }));
+
+    actAsEddy();
+    expect(await api.blockTime(TOMORROW, '16:00', '17:00')).toBe(3); // 16:30 is booked
+    actAsEddy(); // a fresh listener (see takenSlots)
+    expect(await blockedTimes()).toEqual([
+      { date: TOMORROW, start: '16:00', end: '16:30' },
+      { date: TOMORROW, start: '16:45', end: '17:00' },
+    ]);
+
+    actAsCustomer(SARA);
+    expect(await takenSlots()).toEqual(new Set(['16:00', '16:15', '16:30', '16:45']));
+    await expect(
+      api.createBooking(request('16:00', { phone: OTHER_PHONE })),
+    ).rejects.toBeInstanceOf(api.SlotTakenError);
+    await expect(api.blockTime(TOMORROW, '18:00', '18:15')).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+
+    actAsEddy();
+    await api.unblockTime(TOMORROW, '16:00', '17:00');
+    const left = await getDocsFromServer(
+      query(collection(current.db as Firestore, 'slots'), where('date', '==', TOMORROW)),
+    );
+    expect(left.docs.map((d) => d.id)).toEqual([`${TOMORROW}_1630`]);
   });
 });

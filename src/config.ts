@@ -1,6 +1,3 @@
-/** How many days (starting today) customers can book. */
-export const DAYS_TO_SHOW = 4;
-
 /** Size of one time slot on the booking grid, in minutes. */
 export const SLOT_MINUTES = 15;
 
@@ -21,3 +18,15 @@ export const MAX_ACTIVE_BOOKINGS_PER_ACCOUNT = 2;
 
 /** Longest name a booking can have (enforced by firestore.rules). */
 export const MAX_NAME_LENGTH = 50;
+
+/** Most breaks one weekday can have (enforced by firestore.rules). */
+export const MAX_BREAKS_PER_DAY = 2;
+
+/** Longest service, in minutes. firestore.rules checks at most this many slots per booking. */
+export const MAX_SERVICE_MINUTES = 60;
+
+/** Most special booking periods (firestore.rules checks only this many). */
+export const MAX_SPECIAL_PERIODS = 4;
+
+/** Longest booking window Eddy can set, in days (enforced by firestore.rules). */
+export const MAX_BOOKING_WINDOW_DAYS = 60;

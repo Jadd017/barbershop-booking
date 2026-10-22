@@ -1,15 +1,17 @@
 /**
  * Data access layer. The UI only talks to these functions.
- * Settings are still local fake data; bookings live in Firestore.
  *
  * Customers book signed in with Google (see ./auth.ts); Eddy signs in with email/password.
  *
  * Firestore layout:
+ * - settings/shop: Eddy's settings (see lib/settingsDoc.ts). Everyone reads it live; only Eddy
+ *   writes it. It's created with DEFAULT_SETTINGS the first time Eddy opens /admin.
  * - bookings/{bookingCode}: the full booking, including the customer's name, phone, Google UID
  *   (customerUid) and email. Customers can only read and cancel their own; walk-ins Eddy adds
  *   have customerUid null.
  * - slots/{date}_{HHMM}: one doc per taken 15-min slot, holding only bookingId and date,
  *   so the customer page can see which times are taken without reading anyone's details.
+ *   Times Eddy blocks are slot docs too ({date, blocked: true}), so they are taken the same way.
  * - phoneLimits/{phone}_{1|2}: the two "seats" a phone number can hold, each pointing at a booking.
  *   Customers can't read them; firestore.rules only lets a booking take a free seat, which
  *   caps each phone at MAX_ACTIVE_BOOKINGS_PER_PHONE upcoming bookings.
@@ -32,6 +34,7 @@ import {
   Timestamp,
   where,
   type DocumentData,
+  type DocumentReference,
   type Transaction,
 } from 'firebase/firestore';
 import {
@@ -39,12 +42,16 @@ import {
   MAX_ACTIVE_BOOKINGS_PER_ACCOUNT,
   MAX_ACTIVE_BOOKINGS_PER_PHONE,
   SHOP_TIME_ZONE,
+  SLOT_MINUTES,
 } from '../config';
 import { generateBookingCode } from '../lib/bookingCode';
+import { bookableDays, fitsHours } from '../lib/schedule';
+import { DEFAULT_SETTINGS, fromSettingsDoc, toSettingsDoc, type SettingsDoc } from '../lib/settingsDoc';
 import { isPast, slotsNeeded } from '../lib/slots';
-import { zonedInstant } from '../lib/time';
+import { minutesToTime, timeToMinutes, zonedInstant } from '../lib/time';
 import type {
   AdminBooking,
+  BlockedTime,
   BookingRequest,
   BookingStatus,
   ConfirmedBooking,
@@ -54,17 +61,38 @@ import type {
   Settings,
   TimeString,
 } from '../types';
-import { fakeSettings } from './fakeData';
 import { isGoogleUser } from './auth';
 import { auth, db } from './firebase';
 
-/** Simulated network latency so loading states are exercised. */
-const FAKE_DELAY_MS = 200;
+const settingsRef = () => doc(db, 'settings', 'shop');
 
-export function getSettings(): Promise<Settings> {
-  return new Promise((resolve) =>
-    setTimeout(() => resolve(structuredClone(fakeSettings)), FAKE_DELAY_MS),
+/**
+ * Listens to the shop's settings in real time. Calls `onChange` with null while
+ * settings/shop doesn't exist yet (until Eddy first opens /admin).
+ * Returns a function that stops listening.
+ */
+export function subscribeSettings(
+  onChange: (settings: Settings | null) => void,
+  onError: (error: Error) => void,
+): () => void {
+  return onSnapshot(
+    settingsRef(),
+    (snap) => onChange(snap.exists() ? fromSettingsDoc(snap.data() as SettingsDoc) : null),
+    onError,
   );
+}
+
+/** Eddy only: creates settings/shop with DEFAULT_SETTINGS if it doesn't exist yet. */
+export async function ensureSettings(): Promise<void> {
+  await runTransaction(db, async (tx) => {
+    if ((await tx.get(settingsRef())).exists()) return;
+    tx.set(settingsRef(), { ...toSettingsDoc(DEFAULT_SETTINGS), updatedAt: serverTimestamp() });
+  });
+}
+
+/** Eddy only: replaces the settings. Existing bookings are never touched. */
+export async function saveSettings(settings: Settings): Promise<void> {
+  await setDoc(settingsRef(), { ...toSettingsDoc(settings), updatedAt: serverTimestamp() });
 }
 
 /** Thrown when a slot the booking needs was taken first by someone else. */
@@ -80,6 +108,17 @@ export class TimePassedError extends Error {
   constructor() {
     super('Time already passed');
     this.name = 'TimePassedError';
+  }
+}
+
+/**
+ * Thrown when the settings no longer allow the booking: Eddy changed the hours, the service,
+ * the booking window or added a day off while the customer was choosing.
+ */
+export class NotBookableError extends Error {
+  constructor() {
+    super('No longer bookable');
+    this.name = 'NotBookableError';
   }
 }
 
@@ -177,8 +216,15 @@ function slotTime(id: string): TimeString {
   return `${hhmm.slice(0, 2)}:${hhmm.slice(2)}`;
 }
 
+/** Slot docs for every 15-min slot from `start` up to (not including) `end` on `date`. */
+function slotRefsBetween(date: DateKey, start: TimeString, end: TimeString): DocumentReference[] {
+  return slotsNeeded(start, timeToMinutes(end) - timeToMinutes(start)).map((time) =>
+    doc(db, 'slots', slotId(date, time)),
+  );
+}
+
 /**
- * Listens to the taken slots of `date` in real time.
+ * Listens to the taken slots of `date` in real time (booked or blocked).
  * Calls `onChange` right away and again whenever anyone books.
  * Returns a function that stops listening.
  */
@@ -226,10 +272,26 @@ export async function createBooking(request: BookingRequest): Promise<ConfirmedB
       if (!isPermissionDenied(err)) throw err;
     }
   }
-  // Every phone seat refused. The page already checked everything else, so it's the limit
-  // (or the time passed while the customer was typing).
+  // Every phone seat refused. The page already checked everything else, so it's the limit,
+  // unless the time passed or Eddy changed the settings while the customer was typing.
   if (isPast(date, startTime)) throw new TimePassedError();
+  if (!(await allowedBySettings(request))) throw new NotBookableError();
   throw new TooManyBookingsError('phone');
+}
+
+/** True if the current settings still offer `request`'s service, day and time to customers. */
+async function allowedBySettings(request: BookingRequest): Promise<boolean> {
+  const snap = await getDoc(settingsRef());
+  if (!snap.exists()) return false;
+  const settings = fromSettingsDoc(snap.data() as SettingsDoc);
+  const { service, date, startTime } = request;
+  const current = settings.services.find((s) => s.id === service.id);
+  return (
+    current?.name === service.name &&
+    current.durationMinutes === service.durationMinutes &&
+    bookableDays(settings).includes(date) &&
+    fitsHours(settings, date, startTime, service.durationMinutes)
+  );
 }
 
 /** Checks the code rather than the class, which can differ if two copies of the SDK are loaded. */
@@ -467,4 +529,86 @@ export function subscribeBookings(
       ),
     onError,
   );
+}
+
+/**
+ * Listens to every booking from `fromDate` on (all statuses), soonest first.
+ * Eddy uses it to find bookings that clash with new hours or days off.
+ */
+export function subscribeUpcomingBookings(
+  fromDate: DateKey,
+  onChange: (bookings: AdminBooking[]) => void,
+  onError: (error: Error) => void,
+): () => void {
+  const q = query(collection(db, 'bookings'), where('date', '>=', fromDate));
+  return onSnapshot(
+    q,
+    (snapshot) =>
+      onChange(
+        snapshot.docs
+          .map((d) => toAdminBooking(d.id, d.data()))
+          .sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`)),
+      ),
+    onError,
+  );
+}
+
+/**
+ * Listens to the times Eddy blocked from `fromDate` on, soonest first.
+ * Back-to-back blocked slots on a day are merged into one range.
+ */
+export function subscribeBlockedTimes(
+  fromDate: DateKey,
+  onChange: (blocked: BlockedTime[]) => void,
+  onError: (error: Error) => void,
+): () => void {
+  // Filtered on `blocked` here rather than in the query, so Firestore doesn't need a composite index.
+  const q = query(collection(db, 'slots'), where('date', '>=', fromDate));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const ids = snapshot.docs
+        .filter((d) => d.get('blocked') === true)
+        .map((d) => d.id)
+        .sort();
+      const ranges: BlockedTime[] = [];
+      for (const id of ids) {
+        const date = id.slice(0, id.indexOf('_'));
+        const start = slotTime(id);
+        const last = ranges[ranges.length - 1];
+        if (last?.date === date && last.end === start) {
+          last.end = minutesToTime(timeToMinutes(start) + SLOT_MINUTES);
+        } else {
+          ranges.push({ date, start, end: minutesToTime(timeToMinutes(start) + SLOT_MINUTES) });
+        }
+      }
+      onChange(ranges);
+    },
+    onError,
+  );
+}
+
+/**
+ * Eddy only: blocks every free slot from `start` to `end` on `date`, so customers can't book them.
+ * Slots already booked are left to their bookings. Returns how many slots were blocked.
+ */
+export function blockTime(date: DateKey, start: TimeString, end: TimeString): Promise<number> {
+  const refs = slotRefsBetween(date, start, end);
+  return runTransaction(db, async (tx) => {
+    const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+    const free = snaps.filter((snap) => !snap.exists());
+    for (const snap of free) tx.set(snap.ref, { date, blocked: true });
+    return free.length;
+  });
+}
+
+/** Eddy only: frees the blocked slots from `start` to `end` on `date` (booked ones stay). */
+export async function unblockTime(date: DateKey, start: TimeString, end: TimeString): Promise<void> {
+  const refs = slotRefsBetween(date, start, end);
+  await runTransaction(db, async (tx) => {
+    const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+    for (const snap of snaps) {
+      if (snap.get('blocked') === true) tx.delete(snap.ref);
+    }
+  });
 }

@@ -11,7 +11,8 @@ export default function App() {
         <Route path="/my-bookings" element={<MyBookingsPage />} />
         {/* Where the old code + phone lookup was, in case someone saved the link. */}
         <Route path="/manage" element={<Navigate to="/my-bookings" replace />} />
-        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/admin" element={<AdminPage view="bookings" />} />
+        <Route path="/admin/settings" element={<AdminPage view="settings" />} />
       </Routes>
     </BrowserRouter>
   );

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { adminCancelBooking, setBookingStatus } from '../../data/api';
 import { formatLebanesePhone } from '../../lib/phone';
-import { minutesToTime, timeToMinutes } from '../../lib/time';
+import { formatDayLong, minutesToTime, timeToMinutes } from '../../lib/time';
 import { whatsappLink } from '../../lib/whatsapp';
 import type { AdminBooking, BookingStatus } from '../../types';
 
@@ -12,7 +12,15 @@ const STATUS_STYLES: Record<BookingStatus, { label: string; className: string }>
   cancelled: { label: 'Cancelled', className: 'bg-neutral-200 text-neutral-600' },
 };
 
-export function BookingCard({ booking }: { booking: AdminBooking }) {
+interface Props {
+  booking: AdminBooking;
+  /** Shows the booking's date, for lists that span several days. */
+  showDate?: boolean;
+  /** Offers only Cancel (no Done / No-show), for bookings that clash with the settings. */
+  cancelOnly?: boolean;
+}
+
+export function BookingCard({ booking, showDate = false, cancelOnly = false }: Props) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +51,7 @@ export function BookingCard({ booking }: { booking: AdminBooking }) {
     >
       <div className="mb-2 flex items-start justify-between gap-3">
         <div>
+          {showDate && <p className="text-sm font-semibold">{formatDayLong(booking.date)}</p>}
           <p className="text-xl font-bold tabular-nums">
             {booking.startTime}
             <span className="text-base font-normal text-neutral-500">–{end}</span>
@@ -83,23 +92,27 @@ export function BookingCard({ booking }: { booking: AdminBooking }) {
       </p>
 
       {booking.status === 'booked' && !confirmingCancel && (
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => run(() => setBookingStatus(booking.id, 'done'))}
-            className="rounded-xl bg-green-600 px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            Done
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => run(() => setBookingStatus(booking.id, 'no-show'))}
-            className="rounded-xl bg-amber-500 px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
-          >
-            No-show
-          </button>
+        <div className={`mt-4 grid gap-2 ${cancelOnly ? 'grid-cols-1' : 'grid-cols-3'}`}>
+          {!cancelOnly && (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => run(() => setBookingStatus(booking.id, 'done'))}
+                className="rounded-xl bg-green-600 px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => run(() => setBookingStatus(booking.id, 'no-show'))}
+                className="rounded-xl bg-amber-500 px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                No-show
+              </button>
+            </>
+          )}
           <button
             type="button"
             disabled={busy}

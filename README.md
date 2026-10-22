@@ -20,13 +20,14 @@ npm run build    # type-check + production build
 
 ```
 src/
-  config.ts          DAYS_TO_SHOW, SLOT_MINUTES
+  config.ts          SLOT_MINUTES, limits shared with firestore.rules
   types.ts           Shared types (Settings, Service, Booking)
   data/
-    api.ts           getSettings(), getBookings(date) — the only data entry point for the UI
-    fakeData.ts      Fake settings and bookings (phase 1)
+    api.ts           The only data entry point for the UI (Firestore)
   lib/
-    slots.ts         Availability logic (15-min grid, hours, break, bookings)
+    schedule.ts      Hours, breaks, days off and the booking window from the settings
+    settingsDoc.ts   settings/shop as stored in Firestore, and its defaults
+    slots.ts         Availability logic (15-min grid, hours, breaks, taken/blocked slots)
     time.ts          Time/date helpers
   components/        ServicePicker, DayPicker, TimeGrid
   App.tsx            Booking page
@@ -53,6 +54,25 @@ the page tells those visitors to open it in Chrome or Safari.
 Eddy's `/admin` login stays email/password. His account isn't a Google one, so it never counts
 as a customer, and a Google customer who opens `/admin` sees "Not authorized".
 
+## Settings (Eddy)
+
+`/admin/settings` (the **Settings** link on the dashboard) edits `settings/shop`, which the
+booking page reads live: weekly hours with up to 2 breaks a day (or closed), services
+(15–60 min), how many days ahead customers can book, up to 4 special periods (while today is
+between their dates, customers can book their own number of days ahead), and days off.
+Changes are saved together with **Save changes**.
+
+**Blocked times** (a time range on one day) are saved straight away as slot docs marked
+`blocked`, so they count as taken everywhere. Times already booked are left to their bookings.
+
+Nothing on the settings page cancels bookings. Upcoming bookings on a closed day, a day off,
+outside the hours or in a break are listed at the top (and in the blocking form) with a Cancel
+button, and saving changes that create new clashes asks for confirmation first.
+
+`settings/shop` is created with the defaults in `src/lib/settingsDoc.ts` (10:00–20:00 every day,
+break 14:00–15:00, Haircut 30 / Beard 15 / Haircut + Beard 45, 4 days ahead) the first time Eddy
+opens `/admin`. Until then the booking page says booking opens soon.
+
 ## Firestore security rules
 
 `firestore.rules` enforces everything on the server (the page's checks are only for UX):
@@ -63,9 +83,22 @@ as a customer, and a Google customer who opens `/admin` sees "Not authorized".
 - Each Google account and each phone can hold at most 2 upcoming bookings
   (via `userLimits/{uid}_{1|2}` and `phoneLimits/{phone}_{1|2}` "seats").
 - Bookings are fully validated and must claim their slots in the same transaction.
+- Customer bookings must match `settings/shop`: an existing service with its current name and
+  length, within that weekday's hours, clear of its breaks, not on a closed day or day off, and
+  within the booking window (or a special period's window while it's on).
+- Eddy's walk-ins skip the window and hours but still claim their slots, so they can't
+  double-book. Eddy can only change a booking's status, not move it or revive a cancelled one.
+- Anyone can read `settings/shop`; only Eddy can write it, and its shape is checked.
+- Blocked times are slot docs only Eddy can create or delete.
 - `customers/{uid}` keeps the last name and phone for pre-filling; only that customer and Eddy can read it.
 
-The services, `ADMIN_UID` and `DAYS_TO_SHOW` are copied into the rules — keep them in sync.
+`ADMIN_UID` and the limits in `src/config.ts` (60-min services, 2 breaks a day, 4 special
+periods, 60-day window) are copied into the rules; keep them in sync.
+
+Firestore stops evaluating a write after 1000 expressions, and a customer booking uses a lot of
+them. That's why `settings/shop` stores times as minutes and special periods as day numbers, and
+why the rules compute shared values once. The "heaviest valid booking" test fails if a change
+pushes the worst case over the limit.
 
 ```bash
 npm run test:rules   # rules + data layer tests in the Firestore emulator (needs Java 21+)

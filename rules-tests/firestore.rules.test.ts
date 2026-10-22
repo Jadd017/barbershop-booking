@@ -26,8 +26,11 @@ import {
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { ADMIN_UID, SHOP_TIME_ZONE } from '../src/config';
+import { weekdayIndex } from '../src/lib/schedule';
+import { DEFAULT_SETTINGS, toSettingsDoc } from '../src/lib/settingsDoc';
 import { slotsNeeded } from '../src/lib/slots';
 import { addDays, zonedInstant } from '../src/lib/time';
+import type { DayHours, Settings } from '../src/types';
 
 const SERVICES = {
   beard: { id: 'beard', name: 'Beard', durationMinutes: 15 },
@@ -60,7 +63,26 @@ beforeAll(async () => {
 
 afterAll(() => env.cleanup());
 
-beforeEach(() => env.clearFirestore());
+beforeEach(async () => {
+  await env.clearFirestore();
+  // Every day 10:00–20:00, break 14:00–15:00; Haircut 30, Beard 15, Haircut + Beard 45; 4 days ahead.
+  await seedSettings();
+});
+
+/** Puts settings/shop in the database (the defaults plus `change`), bypassing the rules. */
+function seedSettings(change: Partial<Settings> = {}) {
+  return env.withSecurityRulesDisabled((ctx) =>
+    setDoc(doc(ctx.firestore() as unknown as Firestore, 'settings', 'shop'), {
+      ...toSettingsDoc({ ...DEFAULT_SETTINGS, ...change }),
+      updatedAt: Timestamp.now(),
+    }),
+  );
+}
+
+/** The default weekly hours with `date`'s weekday replaced by `hours`. */
+function hoursWith(date: string, hours: Partial<DayHours>): DayHours[] {
+  return DEFAULT_SETTINGS.weeklyHours.map((d, i) => (i === weekdayIndex(date) ? { ...d, ...hours } : d));
+}
 
 // The contexts return compat instances; the modular functions accept them at runtime.
 const anyone = () => env.unauthenticatedContext().firestore() as unknown as Firestore;
@@ -695,17 +717,29 @@ describe('slots', () => {
 });
 
 describe('Eddy (admin)', () => {
-  it('can mark a booking done or no-show', async () => {
+  it('can mark a booking done or no-show, and undo it', async () => {
     await seed();
-    await assertSucceeds(
-      updateDoc(doc(admin(), 'bookings', 'ABC234'), { status: 'done', statusChangedAt: serverTimestamp() }),
-    );
+    const ref = () => doc(admin(), 'bookings', 'ABC234');
+    await assertSucceeds(updateDoc(ref(), { status: 'done', statusChangedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(ref(), { status: 'no-show', statusChangedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(ref(), { status: 'booked', statusChangedAt: serverTimestamp() }));
   });
 
   it('a signed-in customer cannot', async () => {
     await seed();
     await assertFails(
       updateDoc(doc(rami(), 'bookings', 'ABC234'), { status: 'done', statusChangedAt: serverTimestamp() }),
+    );
+  });
+
+  it('cannot move a booking (its slots would stay behind) or revive a cancelled one', async () => {
+    await seed();
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'ABC234'), { startTime: '16:00' }));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'ABC234'), { date: addDays(TODAY, 2) }));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'ABC234'), { durationMinutes: 60 }));
+    await seed({ code: 'DEF345', time: '16:00', status: 'cancelled', seat: 2, accountSeat: 2 });
+    await assertFails(
+      updateDoc(doc(admin(), 'bookings', 'DEF345'), { status: 'booked', statusChangedAt: serverTimestamp() }),
     );
   });
 
@@ -719,21 +753,415 @@ describe('Eddy (admin)', () => {
     await assertSucceeds(cancel(admin(), 'ABC234', [slotId(TODAY, '00:00'), slotId(TODAY, '00:15')]));
   });
 
-  it('can add a walk-in without a phone, a customer UID or any seat', async () => {
-    await assertSucceeds(book(admin(), { phone: null, customer: null, seat: null }));
-  });
-
   it('can delete a slot', async () => {
     await seed();
     await assertSucceeds(deleteDoc(doc(admin(), 'slots', slotId(TOMORROW, '11:00'))));
+  });
+
+  it('cannot take over a booked slot', async () => {
+    await seed();
+    await assertFails(
+      setDoc(doc(admin(), 'slots', slotId(TOMORROW, '11:00')), { bookingId: 'DEF345', date: TOMORROW }),
+    );
+  });
+});
+
+describe('Eddy walk-ins', () => {
+  const walkIn = (o: BookingOptions = {}) =>
+    book(admin(), { phone: null, customer: null, seat: null, ...o });
+
+  it('can be added without a phone, a customer UID or any seat', async () => {
+    await assertSucceeds(walkIn());
+  });
+
+  it('ignore the booking window', async () => {
+    await assertSucceeds(walkIn({ date: addDays(TODAY, 4) }));
+    await assertSucceeds(walkIn({ code: 'DEF345', date: addDays(TODAY, 60) }));
+  });
+
+  it('ignore the hours, closed days and days off', async () => {
+    await seedSettings({ weeklyHours: hoursWith(TOMORROW, { closed: true }) });
+    await assertSucceeds(walkIn());
+    await seedSettings({ daysOff: [addDays(TODAY, 2)] });
+    await assertSucceeds(walkIn({ code: 'DEF345', date: addDays(TODAY, 2), time: '21:00' }));
+  });
+
+  it('refused for the same or an overlapping time as a booking', async () => {
+    await seed(); // 11:00–11:30
+    await assertFails(walkIn({ code: 'DEF345' }));
+    await assertFails(walkIn({ code: 'DEF345', time: '11:15' }));
+    await assertFails(walkIn({ code: 'DEF345', time: '10:45', service: SERVICES.haircutBeard }));
+  });
+
+  it('refused for an overlapping time beyond the booking window too', async () => {
+    const far = addDays(TODAY, 30);
+    await assertSucceeds(walkIn({ date: far }));
+    await assertFails(walkIn({ code: 'DEF345', date: far, time: '11:15', service: SERVICES.beard }));
+  });
+
+  it('refused without all of their slots', async () => {
+    await assertFails(walkIn({ slots: [] }));
+    await assertFails(walkIn({ service: SERVICES.haircutBeard, slots: ['11:00', '11:15'] }));
+  });
+
+  it('refused longer than 60 minutes or off the 15-minute grid', async () => {
+    await assertFails(
+      walkIn({
+        fields: { durationMinutes: 75 },
+        slots: ['11:00', '11:15', '11:30', '11:45', '12:00'],
+      }),
+    );
+    await assertFails(walkIn({ time: '11:05', slots: ['11:05', '11:20'] }));
+  });
+
+  it('refused with a made-up createdAt or a status other than "booked"', async () => {
+    await assertFails(walkIn({ fields: { createdAt: Timestamp.now() } }));
+    await assertFails(walkIn({ fields: { status: 'done' } }));
+  });
+});
+
+describe('settings', () => {
+  const save = (db: Firestore, settings: Record<string, unknown>) =>
+    setDoc(doc(db, 'settings', 'shop'), settings);
+  const valid = (change: Partial<Settings> = {}) => ({
+    ...toSettingsDoc({ ...DEFAULT_SETTINGS, ...change }),
+    updatedAt: serverTimestamp(),
+  });
+
+  it('anyone can read them, signed in or not', async () => {
+    await assertSucceeds(getDoc(doc(anyone(), 'settings', 'shop')));
+    await assertSucceeds(getDoc(doc(rami(), 'settings', 'shop')));
+  });
+
+  it('only Eddy can write them', async () => {
+    await assertFails(save(anyone(), valid()));
+    await assertFails(save(rami(), valid()));
+    await assertFails(save(passwordUser(), valid()));
+    await assertFails(updateDoc(doc(rami(), 'settings', 'shop'), { bookingWindowDays: 60 }));
+    await assertSucceeds(save(admin(), valid({ bookingWindowDays: 7 })));
+  });
+
+  it('Eddy can save every kind of change', async () => {
+    await assertSucceeds(
+      save(
+        admin(),
+        valid({
+          weeklyHours: hoursWith(TOMORROW, {
+            start: '09:00',
+            end: '18:00',
+            breaks: [
+              { start: '12:00', end: '12:30' },
+              { start: '15:00', end: '15:15' },
+            ],
+          }).map((d, i) => (i === 6 ? { ...d, closed: true } : d)),
+          services: [{ id: 's-1', name: 'Kids cut', durationMinutes: 15 }],
+          specialPeriods: [
+            { name: 'Christmas', start: '2026-12-15', end: '2026-12-31', daysAhead: 14 },
+            { name: 'New Year', start: '2027-01-01', end: '2027-01-03', daysAhead: 7 },
+            { name: 'Eid', start: '2027-03-01', end: '2027-03-05', daysAhead: 7 },
+            { name: 'Easter', start: '2027-04-01', end: '2027-04-05', daysAhead: 7 },
+          ],
+          daysOff: ['2026-12-25', '2027-01-01'],
+        }),
+      ),
+    );
+  });
+
+  it('nobody can delete them, not even Eddy', async () => {
+    await assertFails(deleteDoc(doc(admin(), 'settings', 'shop')));
+  });
+
+  it('refused with more than 2 breaks a day, or not 7 days', async () => {
+    const breaks = [
+      { start: '11:00', end: '11:15' },
+      { start: '12:00', end: '12:15' },
+      { start: '13:00', end: '13:15' },
+    ];
+    await assertFails(save(admin(), valid({ weeklyHours: hoursWith(TOMORROW, { breaks }) })));
+    await assertFails(save(admin(), valid({ weeklyHours: DEFAULT_SETTINGS.weeklyHours.slice(0, 6) })));
+  });
+
+  it('refused with hours off the 15-minute grid', async () => {
+    await assertFails(save(admin(), valid({ weeklyHours: hoursWith(TOMORROW, { start: '10:05' }) })));
+  });
+
+  it('refused with more than 4 special periods, or a bad one', async () => {
+    const period = { name: 'X', start: '2026-12-15', end: '2026-12-31', daysAhead: 14 };
+    await assertFails(save(admin(), valid({ specialPeriods: Array(5).fill(period) })));
+    await assertFails(save(admin(), valid({ specialPeriods: [{ ...period, daysAhead: 0 }] })));
+    await assertFails(save(admin(), valid({ specialPeriods: [{ ...period, daysAhead: 1.5 }] })));
+    await assertFails(save(admin(), valid({ specialPeriods: [{ ...period, start: 'soon' }] })));
+  });
+
+  it('refused with a booking window outside 1 to 60 whole days', async () => {
+    await assertFails(save(admin(), valid({ bookingWindowDays: 0 })));
+    await assertFails(save(admin(), valid({ bookingWindowDays: 61 })));
+    await assertFails(save(admin(), valid({ bookingWindowDays: 2.5 })));
+  });
+
+  it('refused with an extra or missing field, a made-up updatedAt, or another doc ID', async () => {
+    await assertFails(save(admin(), { ...valid(), theme: 'dark' }));
+    const { daysOff: _daysOff, ...missing } = valid();
+    await assertFails(save(admin(), missing));
+    await assertFails(save(admin(), { ...valid(), updatedAt: Timestamp.now() }));
+    await assertFails(setDoc(doc(admin(), 'settings', 'other'), valid()));
+  });
+});
+
+describe('customer bookings follow the settings', () => {
+  it('refused before opening or past closing', async () => {
+    await assertFails(book(rami(), { time: '09:45' }));
+    await assertFails(book(rami(), { time: '19:45' })); // would end 20:15
+  });
+
+  it('allowed from opening, and ending exactly at closing', async () => {
+    await assertSucceeds(book(rami(), { time: '10:00' }));
+    await assertSucceeds(book(rami(), { code: 'DEF345', time: '19:30', seat: 2, accountSeat: 2 }));
+  });
+
+  it('refused in a break or running into one', async () => {
+    await assertFails(book(rami(), { time: '14:00', service: SERVICES.beard }));
+    await assertFails(book(rami(), { time: '13:45' })); // 13:45–14:15
+    await assertFails(book(rami(), { time: '14:45' })); // 14:45–15:15
+  });
+
+  it('allowed right before and right after a break', async () => {
+    await assertSucceeds(book(rami(), { time: '13:30' }));
+    await assertSucceeds(book(rami(), { code: 'DEF345', time: '15:00', seat: 2, accountSeat: 2 }));
+  });
+
+  it("checks that weekday's own hours and its second break", async () => {
+    await seedSettings({
+      weeklyHours: hoursWith(TOMORROW, {
+        start: '12:00',
+        end: '18:00',
+        breaks: [
+          { start: '13:00', end: '13:30' },
+          { start: '16:00', end: '16:30' },
+        ],
+      }),
+    });
+    await assertFails(book(rami(), { time: '11:00' })); // fine on other days
+    await assertFails(book(rami(), { time: '15:45' })); // into the second break
+    await assertFails(book(rami(), { time: '16:15', service: SERVICES.beard }));
+    await assertFails(book(rami(), { time: '17:45' })); // past 18:00
+    await assertSucceeds(book(rami(), { time: '14:00' })); // 14:00 is no break on this day
+    await assertSucceeds(
+      book(rami(), {
+        code: 'DEF345',
+        time: '16:30',
+        service: SERVICES.haircutBeard,
+        seat: 2,
+        accountSeat: 2,
+      }),
+    );
+  });
+
+  it('refused on a closed weekday', async () => {
+    await seedSettings({ weeklyHours: hoursWith(TOMORROW, { closed: true }) });
+    await assertFails(book(rami()));
+    await assertSucceeds(book(rami(), { date: addDays(TODAY, 2) }));
+  });
+
+  it('refused on a day off', async () => {
+    await seedSettings({ daysOff: [TOMORROW] });
+    await assertFails(book(rami()));
+    await assertSucceeds(book(rami(), { date: addDays(TODAY, 2) }));
+  });
+
+  it("refused when the service isn't in the settings anymore", async () => {
+    await seedSettings({ services: DEFAULT_SETTINGS.services.filter((s) => s.id !== 'haircut') });
+    await assertFails(book(rami()));
+  });
+
+  it("refused when the duration or name don't match the service's current ones", async () => {
+    await seedSettings({
+      services: [
+        { id: 'haircut', name: 'Haircut', durationMinutes: 45 },
+        { id: 'beard', name: 'Beard trim', durationMinutes: 15 },
+      ],
+    });
+    await assertFails(book(rami())); // still 30 min
+    await assertFails(book(rami(), { service: SERVICES.beard })); // still called "Beard"
+    await assertSucceeds(
+      book(rami(), { service: { id: 'haircut', name: 'Haircut', durationMinutes: 45 } }),
+    );
+  });
+
+  it('allowed for a new 60-minute service, even taking both second seats', async () => {
+    const color = { id: 's-color', name: 'Color', durationMinutes: 60 };
+    await seedSettings({ services: [...DEFAULT_SETTINGS.services, color] });
+    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
+    // The most document reads a customer booking does: settings, 4 slots, 2 + 2 seats.
+    await assertSucceeds(
+      book(rami(), { code: 'CCC444', service: color, time: '16:00', seat: 2, accountSeat: 2 }),
+    );
+  });
+
+  it('refused for a service longer than 60 minutes, even if the settings have one', async () => {
+    const long = { id: 's-long', name: 'Long', durationMinutes: 75 };
+    await seedSettings({ services: [long] });
+    await assertFails(
+      book(rami(), { service: long, slots: ['11:00', '11:15', '11:30', '11:45', '12:00'] }),
+    );
+  });
+
+  it('refused while there are no settings', async () => {
+    await env.withSecurityRulesDisabled((ctx) =>
+      deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'settings', 'shop')),
+    );
+    await assertFails(book(rami()));
+  });
+
+  it("doesn't affect existing bookings: still cancellable after their service and day are gone", async () => {
+    await seed();
+    await seedSettings({ services: [], weeklyHours: hoursWith(TOMORROW, { closed: true }) });
+    await assertSucceeds(getDoc(doc(rami(), 'bookings', 'ABC234')));
+    await assertSucceeds(cancel(rami()));
+  });
+});
+
+describe('booking window', () => {
+  const sarasBooking = (date: string): BookingOptions => ({
+    code: 'GHJ456',
+    date,
+    customer: SARA,
+    phone: OTHER_PHONE,
+  });
+
+  it('follows bookingWindowDays', async () => {
+    await seedSettings({ bookingWindowDays: 2 });
+    await assertSucceeds(book(rami(), { date: TOMORROW }));
+    await assertFails(book(sara(), sarasBooking(addDays(TODAY, 2))));
+
+    await seedSettings({ bookingWindowDays: 10 });
+    await assertSucceeds(book(sara(), sarasBooking(addDays(TODAY, 9))));
+    await assertFails(book(sara(), { ...sarasBooking(addDays(TODAY, 10)), code: 'KLM567', accountSeat: 2, seat: 2 }));
+  });
+
+  it('a special period that includes today lets customers book further ahead', async () => {
+    await seedSettings({
+      specialPeriods: [{ name: 'Holidays', start: addDays(TODAY, -3), end: TODAY, daysAhead: 10 }],
+    });
+    await assertSucceeds(book(rami(), { date: addDays(TODAY, 9) }));
+    await assertFails(book(sara(), sarasBooking(addDays(TODAY, 10))));
+  });
+
+  it('any of the 4 special periods counts', async () => {
+    const later = { name: 'Later', start: addDays(TODAY, 20), end: addDays(TODAY, 30), daysAhead: 30 };
+    await seedSettings({
+      specialPeriods: [
+        later,
+        later,
+        later,
+        { name: 'Now', start: TODAY, end: addDays(TODAY, 2), daysAhead: 8 },
+      ],
+    });
+    await assertSucceeds(book(rami(), { date: addDays(TODAY, 7) }));
+  });
+
+  it("a special period that hasn't started or has ended doesn't count", async () => {
+    await seedSettings({
+      specialPeriods: [
+        { name: 'Soon', start: TOMORROW, end: addDays(TODAY, 10), daysAhead: 10 },
+        { name: 'Over', start: addDays(TODAY, -10), end: addDays(TODAY, -1), daysAhead: 10 },
+      ],
+    });
+    await assertFails(book(rami(), { date: addDays(TODAY, 5) }));
+  });
+
+  // Firestore stops evaluating a write after 1000 expressions; this is the most work a valid
+  // customer booking makes the rules do.
+  it('the heaviest valid booking still fits within the rules evaluation limit', async () => {
+    const date = addDays(TODAY, 5);
+    const color = { id: 's-color', name: 'Color', durationMinutes: 60 };
+    const later = { name: 'Later', start: addDays(TODAY, 20), end: addDays(TODAY, 30), daysAhead: 30 };
+    await seedSettings({
+      services: [...DEFAULT_SETTINGS.services, color],
+      bookingWindowDays: 1,
+      specialPeriods: [later, later, later, { name: 'Now', start: TODAY, end: TODAY, daysAhead: 10 }],
+      weeklyHours: hoursWith(date, {
+        breaks: [
+          { start: '12:00', end: '12:30' },
+          { start: '14:00', end: '15:00' },
+        ],
+      }),
+      daysOff: Array.from({ length: 60 }, (_, i) => addDays(TODAY, 10 + i)),
+    });
+    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
+    await assertSucceeds(
+      book(rami(), { code: 'CCC444', date, service: color, time: '16:00', seat: 2, accountSeat: 2 }),
+    );
+  });
+
+  it('a special period still respects days off', async () => {
+    const far = addDays(TODAY, 8);
+    await seedSettings({
+      specialPeriods: [{ name: 'Holidays', start: TODAY, end: TODAY, daysAhead: 10 }],
+      daysOff: [far],
+    });
+    await assertFails(book(rami(), { date: far }));
+    await assertSucceeds(book(rami(), { date: addDays(far, 1) }));
+  });
+});
+
+describe('blocked times', () => {
+  const block = (db: Firestore, date: string, time: string, data: Record<string, unknown> = {}) =>
+    setDoc(doc(db, 'slots', slotId(date, time)), { date, blocked: true, ...data });
+
+  it('Eddy can block a free time', async () => {
+    await assertSucceeds(block(admin(), TOMORROW, '16:00'));
+  });
+
+  it('customers cannot book a blocked time, or one running into it', async () => {
+    await block(admin(), TOMORROW, '11:15');
+    await assertFails(book(rami())); // 11:00–11:30
+    await assertFails(book(rami(), { time: '11:15', service: SERVICES.beard }));
+    await assertSucceeds(book(rami(), { time: '11:30' }));
+  });
+
+  it("Eddy's walk-ins cannot take a blocked time either", async () => {
+    await block(admin(), TOMORROW, '11:00');
+    await assertFails(book(admin(), { phone: null, customer: null, seat: null }));
+  });
+
+  it('Eddy cannot block a booked slot (the booking keeps it)', async () => {
+    await seed();
+    await assertFails(block(admin(), TOMORROW, '11:00'));
+  });
+
+  it('customers cannot block or unblock', async () => {
+    await assertFails(block(rami(), TOMORROW, '16:00'));
+    await assertFails(block(anyone(), TOMORROW, '16:00'));
+    await block(admin(), TOMORROW, '16:00');
+    await assertFails(deleteDoc(doc(rami(), 'slots', slotId(TOMORROW, '16:00'))));
+  });
+
+  it('Eddy can unblock', async () => {
+    await block(admin(), TOMORROW, '16:00');
+    await assertSucceeds(deleteDoc(doc(admin(), 'slots', slotId(TOMORROW, '16:00'))));
+    await assertSucceeds(book(rami(), { time: '16:00' }));
+  });
+
+  it('refused with an extra field, another date than the ID, or off the grid', async () => {
+    await assertFails(block(admin(), TOMORROW, '16:00', { reason: 'dentist' }));
+    await assertFails(block(admin(), TOMORROW, '16:00', { blocked: 'yes' }));
+    await assertFails(
+      setDoc(doc(admin(), 'slots', slotId(TOMORROW, '16:00')), { date: TODAY, blocked: true }),
+    );
+    await assertFails(block(admin(), TOMORROW, '16:05'));
+  });
+
+  it("anyone can see a day's blocked times among the taken slots", async () => {
+    await block(admin(), TOMORROW, '16:00');
+    await assertSucceeds(getDocs(query(collection(anyone(), 'slots'), where('date', '==', TOMORROW))));
   });
 });
 
 describe('everything else', () => {
   it('is denied', async () => {
-    await assertFails(getDoc(doc(anyone(), 'settings', 'shop')));
-    await assertFails(getDoc(doc(rami(), 'settings', 'shop')));
-    await assertFails(setDoc(doc(anyone(), 'settings', 'shop'), { barberName: 'X' }));
+    await assertFails(getDoc(doc(anyone(), 'anything', 'x')));
+    await assertFails(getDoc(doc(rami(), 'anything', 'x')));
     await assertFails(setDoc(doc(admin(), 'anything', 'x'), { a: 1 }));
   });
 });

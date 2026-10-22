@@ -15,11 +15,42 @@ export interface TimeRange {
   end: TimeString;
 }
 
+/** Opening hours of one weekday. Times are kept while closed, so reopening restores them. */
+export interface DayHours {
+  closed: boolean;
+  start: TimeString;
+  end: TimeString;
+  /** At most MAX_BREAKS_PER_DAY, each within start–end. */
+  breaks: TimeRange[];
+}
+
+/** While today is between `start` and `end` (inclusive), customers can book `daysAhead` days ahead. */
+export interface SpecialPeriod {
+  name: string;
+  start: DateKey;
+  end: DateKey;
+  daysAhead: number;
+}
+
 export interface Settings {
   barberName: string;
-  workingHours: TimeRange;
-  breakTime: TimeRange;
+  /** 7 entries, Monday first. */
+  weeklyHours: DayHours[];
+  /** In the order customers see them. */
   services: Service[];
+  /** How many days (starting today) customers can book. */
+  bookingWindowDays: number;
+  /** At most MAX_SPECIAL_PERIODS. */
+  specialPeriods: SpecialPeriod[];
+  /** Dates the shop is closed, sorted. */
+  daysOff: DateKey[];
+}
+
+/** A time range Eddy blocked on one day (stored as blocked slot docs). */
+export interface BlockedTime {
+  date: DateKey;
+  start: TimeString;
+  end: TimeString;
 }
 
 /** What the customer page sends when booking. */
