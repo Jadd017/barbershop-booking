@@ -104,3 +104,23 @@ pushes the worst case over the limit.
 npm run test:rules   # rules + data layer tests in the Firestore emulator (needs Java 21+)
 firebase deploy --only firestore:rules
 ```
+
+## Deploy (Firebase Hosting)
+
+```bash
+npm run deploy   # production build, then firebase deploy --only hosting,firestore:rules
+```
+
+The site is served from `dist` at https://eddy-barbershop.web.app. Every path (`/admin`,
+`/my-bookings`, …) falls back to `index.html` so the router handles it. The Firestore rules go
+out in the same command so they always match the code.
+
+- **Auth domain:** `.env.production` sets `VITE_FIREBASE_AUTH_DOMAIN=eddy-barbershop.web.app` for
+  builds, overriding `.env.local`. Google's redirect sign-in then stays on the site's own domain,
+  which mobile browsers need. `npm run dev` keeps the `.env.local` value.
+- **Caching:** files in `/assets` have a content hash in their name, so they're cached for a year.
+  `index.html`, the app's routes and the favicon are sent with `no-cache` (always revalidated),
+  so the next visit after a deploy loads the new version.
+
+`npx firebase emulators:start --only hosting` serves `dist` at http://127.0.0.1:5050 with the
+same rewrites. The emulator doesn't apply the cache headers.

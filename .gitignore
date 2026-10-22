@@ -27,6 +27,8 @@ dist-ssr
 .env
 .env.*
 !.env.example
+# Only the production auth domain, nothing secret.
+!.env.production
 
 # Firebase
 .firebase/
