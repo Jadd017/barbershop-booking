@@ -77,3 +77,16 @@ export function zonedInstant(date: DateKey, time: TimeString, timeZone: string):
   const guess = wallClockAsUtc - utcOffsetMinutes(timeZone, new Date(wallClockAsUtc)) * 60_000;
   return new Date(wallClockAsUtc - utcOffsetMinutes(timeZone, new Date(guess)) * 60_000);
 }
+
+const DAY_MS = 86_400_000;
+
+/** Days since 1970-01-01: "1970-01-02" → 1. firestore.rules works out today's the same way. */
+export function dayNumber(date: DateKey): number {
+  const [y, m, d] = date.split('-').map(Number);
+  return Date.UTC(y, m - 1, d) / DAY_MS;
+}
+
+/** The reverse of dayNumber. */
+export function dateOfDayNumber(day: number): DateKey {
+  return new Date(day * DAY_MS).toISOString().slice(0, 10);
+}

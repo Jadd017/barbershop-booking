@@ -119,3 +119,82 @@ export interface AdminBooking {
   /** The Google account that booked; null for walk-ins Eddy added. */
   customerEmail: string | null;
 }
+
+// ---- Multi-barber (docs/ARCHITECTURE.md). Replaces Settings once the pages switch over. ----
+
+/** The shop's opening hours on one weekday. Times are kept while closed, like DayHours. */
+export interface OpeningHours {
+  closed: boolean;
+  start: TimeString;
+  end: TimeString;
+}
+
+/** Shop-wide settings (settings/shop): the same for every barber. */
+export interface ShopSettings {
+  /** Header, browser tab title and WhatsApp text. */
+  shopName: string;
+  /** 7 entries, Monday first. Every barber's hours must fit inside them. */
+  openingHours: OpeningHours[];
+  /** In the order customers see them. */
+  services: Service[];
+  /** How many days (starting today) customers can book. */
+  bookingWindowDays: number;
+  /** At most MAX_SPECIAL_PERIODS. */
+  specialPeriods: SpecialPeriod[];
+  /** Dates the whole shop is closed, sorted. */
+  closedDays: DateKey[];
+  /** Where customers send their booking, e.g. "+96170123456"; empty until the owner sets it. */
+  whatsapp: string;
+  /** Street address shown with "Get directions"; may be empty. */
+  shopAddress: string;
+  /** Google Maps link for "Get directions": https only (see lib/shop.ts), or empty. */
+  mapsUrl: string;
+}
+
+/** "#RRGGBB" colors the page is drawn in (become the Tailwind theme variables). */
+export interface BrandColors {
+  /** Header and text (today's charcoal). */
+  dark: string;
+  /** Buttons and highlights (today's brass). */
+  accent: string;
+  /** Page background (today's cream). */
+  light: string;
+}
+
+/** The shop's look (settings/branding). */
+export interface Branding {
+  /** A small image as a data: URL (see lib/logo.ts), or null to show the shop name only. */
+  logo: string | null;
+  colors: BrandColors;
+}
+
+/** One barber (barbers/{id}): what customers pick, and his own schedule. */
+export interface Barber {
+  /** Short slug chosen when he's added ("karim"), never changed. */
+  id: string;
+  name: string;
+  /** Inactive barbers aren't shown to customers and can't be booked by them. */
+  active: boolean;
+  /** Display order, and the tie-break when assigning "Any barber". */
+  order: number;
+  /** 7 entries, Monday first. Each open day fits inside the shop's opening hours. */
+  weeklyHours: DayHours[];
+  /** His personal days off, sorted. */
+  daysOff: DateKey[];
+}
+
+/** One barber's taken time on one day (days/{barberId}_{date}). */
+export interface BarberDay {
+  barberId: string;
+  date: DateKey;
+  /** Each taken 15-min slot → the booking that occupies it. */
+  booked: ReadonlyMap<TimeString, string>;
+  /** Slots the barber or owner blocked. */
+  blocked: ReadonlySet<TimeString>;
+}
+
+/** A start time for "Any barber": available if at least one barber is free then. */
+export interface AnyStartTimeOption extends StartTimeOption {
+  /** The barbers free for the whole service from this time, in display order. */
+  freeBarberIds: string[];
+}

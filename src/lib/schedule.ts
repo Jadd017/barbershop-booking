@@ -12,7 +12,7 @@ import {
   MAX_SPECIAL_PERIODS,
   SLOT_MINUTES,
 } from '../config';
-import type { DateKey, DayHours, Settings, TimeString } from '../types';
+import type { DateKey, DayHours, Service, Settings, SpecialPeriod, TimeString } from '../types';
 import { isSafeLink } from './shop';
 import { fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
 
@@ -43,8 +43,11 @@ export function hoursOn(settings: Settings, date: DateKey): DayHours | null {
   return hours;
 }
 
+/** The booking window part of Settings or ShopSettings. */
+type WindowSettings = { bookingWindowDays: number; specialPeriods: SpecialPeriod[] };
+
 /** How many days (starting today) customers can book, counting special periods that include today. */
-export function bookingWindowOn(settings: Settings, today: DateKey): number {
+export function bookingWindowOn(settings: WindowSettings, today: DateKey): number {
   const special = settings.specialPeriods
     .filter((p) => p.start <= today && today <= p.end)
     .map((p) => p.daysAhead);
@@ -79,7 +82,15 @@ export function fitsHours(
   start: TimeString,
   durationMinutes: number,
 ): boolean {
-  const hours = hoursOn(settings, date);
+  return fitsDayHours(hoursOn(settings, date), start, durationMinutes);
+}
+
+/** True if `durationMinutes` from `start` is within `hours` and clear of its breaks (null: closed). */
+export function fitsDayHours(
+  hours: DayHours | null,
+  start: TimeString,
+  durationMinutes: number,
+): boolean {
   if (!hours) return false;
   const from = timeToMinutes(start);
   const to = from + durationMinutes;
@@ -114,7 +125,7 @@ export function weeklyHoursSummary(settings: Settings): string[] {
   return lines;
 }
 
-function onGrid(time: TimeString): boolean {
+export function onGrid(time: TimeString): boolean {
   return timeToMinutes(time) % SLOT_MINUTES === 0;
 }
 
@@ -124,9 +135,18 @@ function isWholeDays(n: number, max: number): boolean {
 
 /** What's wrong with `settings`, as messages for Eddy; empty if it can be saved. */
 export function settingsErrors(settings: Settings): string[] {
-  const errors: string[] = [];
+  return [
+    ...weeklyHoursErrors(settings.weeklyHours),
+    ...servicesErrors(settings.services),
+    ...shopInfoErrors(settings.shopAddress, settings.mapsUrl),
+    ...windowErrors(settings),
+  ];
+}
 
-  settings.weeklyHours.forEach((hours, i) => {
+/** What's wrong with one week of hours (7 days, Monday first): times, and up to 2 breaks a day. */
+export function weeklyHoursErrors(weeklyHours: DayHours[]): string[] {
+  const errors: string[] = [];
+  weeklyHours.forEach((hours, i) => {
     const day = WEEKDAY_NAMES[i];
     if (hours.closed) return;
     const open = timeToMinutes(hours.start);
@@ -151,10 +171,15 @@ export function settingsErrors(settings: Settings): string[] {
       }
     });
   });
+  return errors;
+}
 
-  if (settings.services.length === 0) errors.push('Add at least one service.');
+/** What's wrong with the services: names, lengths and prices. */
+export function servicesErrors(services: Service[]): string[] {
+  const errors: string[] = [];
+  if (services.length === 0) errors.push('Add at least one service.');
   const names = new Set<string>();
-  for (const service of settings.services) {
+  for (const service of services) {
     const name = service.name.trim();
     if (!name) errors.push('Every service needs a name.');
     else if (names.has(name.toLowerCase())) errors.push(`Two services are called "${name}".`);
@@ -169,15 +194,25 @@ export function settingsErrors(settings: Settings): string[] {
       errors.push(`${name || 'A service'}: price must be 0 to ${MAX_PRICE} dollars, or empty.`);
     }
   }
+  return errors;
+}
 
-  if (settings.shopAddress.trim().length > MAX_ADDRESS_LENGTH) {
+/** What's wrong with the shop's address and Google Maps link. */
+export function shopInfoErrors(shopAddress: string, mapsUrl: string): string[] {
+  const errors: string[] = [];
+  if (shopAddress.trim().length > MAX_ADDRESS_LENGTH) {
     errors.push(`The address can be at most ${MAX_ADDRESS_LENGTH} characters.`);
   }
-  const mapsUrl = settings.mapsUrl.trim();
-  if (mapsUrl && (!isSafeLink(mapsUrl) || mapsUrl.length > MAX_MAPS_URL_LENGTH)) {
+  const url = mapsUrl.trim();
+  if (url && (!isSafeLink(url) || url.length > MAX_MAPS_URL_LENGTH)) {
     errors.push('The Google Maps link must start with https:// (copy it from Share in Google Maps).');
   }
+  return errors;
+}
 
+/** What's wrong with the booking window and the special periods. */
+export function windowErrors(settings: WindowSettings): string[] {
+  const errors: string[] = [];
   if (!isWholeDays(settings.bookingWindowDays, MAX_BOOKING_WINDOW_DAYS)) {
     errors.push(`Booking window must be 1 to ${MAX_BOOKING_WINDOW_DAYS} days.`);
   }
@@ -195,6 +230,5 @@ export function settingsErrors(settings: Settings): string[] {
       errors.push(`${name}: days ahead must be 1 to ${MAX_BOOKING_WINDOW_DAYS}.`);
     }
   }
-
   return errors;
 }

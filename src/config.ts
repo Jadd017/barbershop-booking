@@ -42,3 +42,23 @@ export const MAX_ADDRESS_LENGTH = 200;
 
 /** Longest Google Maps link (enforced by firestore.rules). */
 export const MAX_MAPS_URL_LENGTH = 500;
+
+/** Shop name length (enforced by firestore.rules). */
+export const MIN_SHOP_NAME_LENGTH = 2;
+export const MAX_SHOP_NAME_LENGTH = 40;
+
+/** Barber name length (enforced by firestore.rules). */
+export const MIN_BARBER_NAME_LENGTH = 2;
+export const MAX_BARBER_NAME_LENGTH = 30;
+
+/** Longest side of the shop's logo after it's resized in the browser, in pixels. */
+export const MAX_LOGO_SIDE = 512;
+
+/** Largest logo image after compression, in bytes. */
+export const MAX_LOGO_BYTES = 100_000;
+
+/**
+ * Longest logo data: URL firestore.rules accepts: MAX_LOGO_BYTES in base64 (4 characters per 3
+ * bytes) plus the "data:image/webp;base64," prefix, rounded up.
+ */
+export const MAX_LOGO_DATA_URL_LENGTH = 140_000;

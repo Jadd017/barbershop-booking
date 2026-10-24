@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phase 0 done; Phases 1–9 not started.** Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–1 done; Phases 2–9 not started.** Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -537,8 +537,10 @@ Each phase ends with commands you can run. Every phase keeps `npm run build`, `n
 disabled, admin-key `.gitignore` rules, scripts (`emu`, `dev`, `test:emu`).
 *Test:* see `docs/DEVELOPMENT.md`, "Multi-barber branch".
 
-**Phase 1 – Data model and pure logic**
-New types and doc converters (shop incl. opening hours and name, branding, barber, day),
+**Phase 1 – Data model and pure logic** ✅
+In `src/lib/`: `shopDoc.ts`, `barberDoc.ts`, `barberSchedule.ts`, `barberSlots.ts`, `initials.ts`,
+`logo.ts`, `colors.ts` (today's pages still use `settingsDoc.ts`, `schedule.ts`, `slots.ts`, which
+now share their helpers). New types and doc converters (shop incl. opening hours and name, branding, barber, day),
 per-barber availability (shop ∩ barber hours), "Any barber" union, assignment choice (fewest
 bookings, tie → order), initials, barber-hours-fit-shop check and trimming, logo compression
 size logic.
