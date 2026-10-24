@@ -198,3 +198,46 @@ export interface AnyStartTimeOption extends StartTimeOption {
   /** The barbers free for the whole service from this time, in display order. */
   freeBarberIds: string[];
 }
+
+/** What the booking page sends (or a walk-in): `barberId` null means "Any barber". */
+export interface ShopBookingRequest {
+  name: string;
+  /** Normalized, e.g. "+96170123456". Null only for walk-ins without a phone. */
+  phone: string | null;
+  service: Service;
+  date: DateKey;
+  startTime: TimeString;
+  barberId: string | null;
+}
+
+/** Shown on the confirmation screen and in the WhatsApp message. */
+export interface ShopConfirmedBooking extends ConfirmedBooking {
+  barberId: string;
+  barberName: string;
+  /** The customer chose "Any barber" and was given this one. */
+  anyBarber: boolean;
+}
+
+/** One of the signed-in customer's bookings, on the "My bookings" page. */
+export interface ShopCustomerBooking extends CustomerBooking {
+  barberName: string;
+}
+
+/** A booking as staff see it on the dashboard. */
+export interface ShopStaffBooking extends AdminBooking {
+  barberId: string;
+  barberName: string;
+  anyBarber: boolean;
+}
+
+export type StaffRole = 'owner' | 'barber';
+
+/** A staff login (staff/{uid}). */
+export interface StaffMember {
+  uid: string;
+  username: string;
+  /** The barber this login acts as; the owner is a barber too. */
+  barberId: string;
+  role: StaffRole;
+  active: boolean;
+}

@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phases 0–2 done; Phases 3–9 not started.** Since Phase 2 the rules are the multi-barber ones, so today's single-barber pages no longer work against the emulator until Phases 3–4 switch them over. Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–3 done; Phases 4–9 not started.** Since Phase 2 the rules are the multi-barber ones, so today's single-barber pages no longer work against the emulator until Phases 3–4 switch them over. Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -349,6 +349,16 @@ In the emulator, `npm run seed` does this.
   that aren't in `blocked`. Even a hacked client that skips the transaction can't double-book.
 - Different barbers at the same time are different docs, so they never conflict.
 
+#### Lost races in practice (found in Phase 3)
+
+In the emulator, the loser of a race isn't always retried by the transaction: sometimes its
+write reaches the rules first, and the rules refuse it (the slot is no longer free) with
+"permission denied". That's also the error for "this phone seat is in use", so `createBooking`
+re-reads the barber's day from the server after a refusal: if someone else now has those slots it
+was a lost race, and it tries again (for "Any barber", with the next free barber), up to 6 times;
+only if the time is still free does it move on to the phone's second seat. Moves do the same and
+report "taken". The "6 customers at once" test passes reliably with this.
+
 ### 7.3 What the rules don't check
 
 The "fewest bookings" choice is made in the browser. Checking it in the rules would mean reading
@@ -536,6 +546,7 @@ have no `slots` docs (re-created by a small rollback script if ever needed).
 | Rules assume Lebanon time (UTC+2/+3) | Same as today; a shop outside Lebanon would need a rules constant |
 | Old browser tabs during Eddy's migration | Rules refuse their writes safely; refresh fixes it |
 | App Check per shop | Each project needs its own key; optional, rules protect data regardless |
+| App Check enforced on Authentication (not just Firestore) | The owner's second app for creating logins has no App Check token, so login creation would fail. Only enforce App Check on Firestore (as `docs/DEVELOPMENT.md` already says) |
 
 ## 11. Build order
 
@@ -569,14 +580,19 @@ can't demote himself, cost tests for the heaviest customer booking (≥30% spare
 heaviest staff writes (≥20% spare). `rules-tests/api.test.ts` (the single-barber data layer) is
 left out of the run until Phase 3 rewrites it.
 
-**Phase 3 – Data layer**
-`api.ts`: subscriptions (shop, branding, barbers, days, bookings by barber), `createBooking`
+**Phase 3 – Data layer** ✅
+Built as new files next to today's `api.ts` (which the old pages keep using until Phases 4–6):
+`src/data/shop.ts`, `days.ts`, `bookings.ts`, `accounts.ts`, `errors.ts`. Every function takes a
+`Store` (a Firestore and the signed-in user, `src/data/store.ts`) as its first argument, so tests
+can act as several people at the same moment; the app passes `store` from `firebase.ts`.
+Composite indexes in `firestore.indexes.json`. Planned scope — subscriptions (shop, branding, barbers, days, bookings by barber), `createBooking`
 (specific and Any), cancel, status, walk-ins, block/unblock, hours, days off, move, settings and
 branding, account creation on a second app instance, new login, deactivate. `npm run seed`.
 *Test:* `npm run test:emu` – including concurrency: 6 customers book "Any" at the same time with
 5 free barbers → 5 succeed on 5 different barbers, 1 gets "taken"; two customers book the same
 barber at the same time → exactly one wins; two moves onto the same free slot → exactly one wins;
-owner creates a login and is still signed in as owner.
+owner creates a login and is still signed in as owner (real Auth emulator), "New login" makes the
+old password stop working, the seeded demo shop is bookable. `rules-tests/data.test.ts`.
 
 **Phase 4 – Customer flow**
 Barber step with initials cards + Any, per-barber times, shop name/logo in header and tab title,

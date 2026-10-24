@@ -37,7 +37,9 @@ project (plan: [ARCHITECTURE.md](ARCHITECTURE.md)). `.env.emulator` uses the emu
 
 ```bash
 npm run emu       # terminal 1: Auth + Firestore emulators (needs Java 21+)
-npm run dev       # terminal 2: http://localhost:5173 against the emulators
+npm run seed      # terminal 2: a demo shop in the emulators (owner "tony" and 4 barbers,
+                  #   password "password1"); wipes what was there. Run again after restarting emu.
+npm run dev       # http://localhost:5173 against the emulators
 npm test          # unit tests
 npm run test:emu  # rules + data-layer tests in the emulators (alias: test:rules)
 npm run build     # type-check + build, emulator config
