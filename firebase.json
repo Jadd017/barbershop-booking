@@ -1,9 +1,11 @@
 {
   "firestore": {
     "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
+    "indexes": "firestore.indexes.json",
+    "predeploy": ["node scripts/deploy-guard.mjs"]
   },
   "hosting": {
+    "predeploy": ["node scripts/deploy-guard.mjs"],
     "public": "dist",
     "ignore": [
       "firebase.json",

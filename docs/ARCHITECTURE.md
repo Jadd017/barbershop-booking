@@ -86,10 +86,19 @@ anyway: it's in every wa.me link.
   adds the shop modes to an explicit allow-list.
 - `firebase.json` gains the Auth emulator (port 9099), needed for staff logins and the fake Google
   sign-in popup.
-- `.firebaserc` has no projects on this branch (and `firebase use --clear` was run for this
-  folder), so a bare `firebase deploy` fails with "No active project" instead of pushing new rules
-  onto Eddy's live project (which would break his current site), and `npm run deploy` is disabled
-  until Phase 7.
+- Deploying to Eddy's live project from this branch is blocked at three levels:
+  1. `.firebaserc` has no projects at all on this branch (no `default`, no `eddy` alias) and the
+     CLI's remembered project for this folder was cleared (`firebase use --clear`), so a bare
+     `firebase deploy` stops with "No active project".
+  2. `npm run deploy -- <shop>` (`scripts/deploy.mjs`) refuses unless a shop is named, is an alias
+     in `.firebaserc` (not `default`), has a `.env.<shop>`, and isn't locked.
+  3. `firebase.json` runs `scripts/deploy-guard.mjs` as a **predeploy hook** for both the rules and
+     hosting, so it runs before anything is uploaded, whichever way the deploy was started (even
+     `firebase deploy --project eddy-barbershop` typed by hand). It refuses unless `npm run deploy`
+     started it for a named shop whose alias is the project Firebase is deploying to, and always
+     refuses the projects in `LOCKED_PROJECTS` (`scripts/deployTargets.mjs`): `eddy-barbershop`,
+     until the deliberate commit that migrates Eddy (9.3).
+  On top of that, Vite refuses to build with any non-`demo-` project until Phase 7's allow-list.
 - Scripts:
   - `npm run emu` – start Auth + Firestore emulators for `demo-barbershop`
   - `npm run dev` – the site at http://localhost:5173, against the emulator
@@ -100,16 +109,17 @@ anyway: it's in every wa.me link.
 
 ### 3.3 Build and deploy (Phase 7, used only when you say so)
 
-`scripts/deploy.mjs <shop>`:
+`npm run deploy -- <shop>` (`scripts/deploy.mjs`, with the guard above, added before Phase 4):
 
-1. Refuses unless `<shop>` is an alias in `.firebaserc` and `.env.<shop>` exists.
-2. Refuses if the git branch isn't the release branch for that shop (protects Eddy until
-   migration day).
+1. Refuses unless `<shop>` is named, is an alias in `.firebaserc` and `.env.<shop>` exists, and its
+   project isn't in `LOCKED_PROJECTS` (protects Eddy until migration day).
+2. `--dry-run` prints what it would do. Phase 7 adds the steps below.
 3. Writes `firebase.<shop>.json` from `firebase.template.json` (fills the shop's domains into
    the CSP `frame-src`).
 4. Runs `vite build --mode <shop>` then
    `firebase deploy --project <shop> --config firebase.<shop>.json --only hosting,firestore:rules,firestore:indexes`.
 5. `--dry-run` prints the generated config and the commands without running them.
+6. Inside Firebase, the predeploy guard checks the same again.
 
 `firestore.rules` is **identical for every shop**: no UIDs or shop data are hard-coded in it any
 more (today's `ADMIN_UID` goes away, staff come from `staff/{uid}`). Composite indexes

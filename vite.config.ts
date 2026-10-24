@@ -22,6 +22,6 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     // Rules tests need the Firestore emulator, so they run separately (npm run test:emu).
-    test: { include: ['src/**/*.test.ts'] },
+    test: { include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'] },
   }
 })

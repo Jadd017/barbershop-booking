@@ -45,9 +45,12 @@ npm run test:emu  # rules + data-layer tests in the emulators (alias: test:rules
 npm run build     # type-check + build, emulator config
 ```
 
-Safety: `npm run deploy` is disabled, `.firebaserc` has no projects (so `firebase deploy` says
-"No active project"), Vite refuses to run with a non-`demo-` project, and the app refuses to
-start if the emulator setting and the project ID don't match.
+Safety (details in ARCHITECTURE.md, 3.2): `.firebaserc` has no projects (so `firebase deploy`
+says "No active project"); `npm run deploy -- <shop>` refuses without a named shop from
+`.firebaserc`; every `firebase deploy` runs `scripts/deploy-guard.mjs` first, which refuses
+anything not started by `npm run deploy` and always refuses `eddy-barbershop` (LOCKED_PROJECTS in
+`scripts/deployTargets.mjs`); Vite refuses to run with a non-`demo-` project; and the app refuses
+to start if the emulator setting and the project ID don't match.
 
 ## Structure
 

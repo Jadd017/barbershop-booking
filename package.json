@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build --mode emulator",
     "lint": "oxlint",
     "preview": "vite preview --mode emulator",
-    "deploy": "node scripts/no-deploy.mjs",
+    "deploy": "node scripts/deploy.mjs",
     "emu": "firebase emulators:start --project demo-barbershop --only auth,firestore",
     "seed": "node scripts/seed.mjs",
     "test": "vitest run",
