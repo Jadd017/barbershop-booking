@@ -4,13 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "vite --mode emulator",
+    "build": "tsc -b && vite build --mode emulator",
     "lint": "oxlint",
-    "preview": "vite preview",
-    "deploy": "npm run build && firebase deploy --only hosting,firestore:rules",
+    "preview": "vite preview --mode emulator",
+    "deploy": "node scripts/no-deploy.mjs",
+    "emu": "firebase emulators:start --project demo-barbershop --only auth,firestore",
     "test": "vitest run",
-    "test:rules": "firebase emulators:exec --only firestore \"vitest run --config vitest.rules.config.ts\""
+    "test:emu": "firebase emulators:exec --project demo-barbershop --only auth,firestore \"vitest run --config vitest.rules.config.ts\"",
+    "test:rules": "npm run test:emu"
   },
   "dependencies": {
     "@fontsource/oswald": "^5.3.0",

@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_RECAPTCHA_ENTERPRISE_KEY?: string;
   /** App Check debug token for `npm run dev` only. Secret: .env.local, never committed. */
   readonly VITE_APPCHECK_DEBUG_TOKEN?: string;
+  /** "true" (from .env.emulator): talk to the local emulators. The project ID must be demo-*. */
+  readonly VITE_USE_EMULATOR?: string;
   readonly DEV: boolean;
 }
 

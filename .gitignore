@@ -29,6 +29,15 @@ dist-ssr
 !.env.example
 # Only the production auth domain, nothing secret.
 !.env.production
+# Emulator-only dummy values (demo-barbershop).
+!.env.emulator
+
+# Admin service account keys belong outside the project (docs/ARCHITECTURE.md, 9.1).
+# Ignored here anyway, in case one is saved in the wrong place.
+*-firebase-adminsdk-*.json
+*service-account*.json
+*serviceAccount*.json
+firebase-keys/
 
 # Firebase
 .firebase/

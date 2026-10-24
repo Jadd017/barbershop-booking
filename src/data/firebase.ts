@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -21,12 +21,24 @@ if (missing.length > 0) {
   );
 }
 
+// .env.emulator: everything goes to the local emulators (`npm run emu`). Only "demo-" projects,
+// which Firebase never connects to a real project, so this can't touch a live shop's data.
+const useEmulator = import.meta.env.VITE_USE_EMULATOR === 'true';
+if (useEmulator !== firebaseConfig.projectId.startsWith('demo-')) {
+  throw new Error(
+    `Project "${firebaseConfig.projectId}" with VITE_USE_EMULATOR=${useEmulator}: the emulator needs a demo- project, and a demo- project needs the emulator.`,
+  );
+}
+
 const app = initializeApp(firebaseConfig);
 
 // App Check proves requests come from this site (via reCAPTCHA), not a script using the API key.
 // Must start before Firestore is used. See docs/DEVELOPMENT.md, "App Check".
+// The emulators don't check App Check tokens, so it stays off there.
 const recaptchaKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_KEY;
-if (recaptchaKey) {
+if (useEmulator) {
+  console.info('Using the Firebase emulators (project %s).', firebaseConfig.projectId);
+} else if (recaptchaKey) {
   if (import.meta.env.DEV) {
     // reCAPTCHA refuses localhost, so `npm run dev` uses a debug token instead: the one in
     // .env.local if set, otherwise the SDK makes one and logs it ("AppCheck debug token: ...").
@@ -44,3 +56,9 @@ if (recaptchaKey) {
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+if (useEmulator) {
+  // Ports from firebase.json.
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099');
+}

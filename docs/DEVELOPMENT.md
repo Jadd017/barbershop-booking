@@ -29,6 +29,24 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production build
 ```
 
+## Multi-barber branch
+
+On the `multi-barber` branch everything runs against the local Firebase emulators, never a real
+project (plan: [ARCHITECTURE.md](ARCHITECTURE.md)). `.env.emulator` uses the emulator-only project
+`demo-barbershop`; `.env.local` is ignored there.
+
+```bash
+npm run emu       # terminal 1: Auth + Firestore emulators (needs Java 21+)
+npm run dev       # terminal 2: http://localhost:5173 against the emulators
+npm test          # unit tests
+npm run test:emu  # rules + data-layer tests in the emulators (alias: test:rules)
+npm run build     # type-check + build, emulator config
+```
+
+Safety: `npm run deploy` is disabled, `.firebaserc` has no projects (so `firebase deploy` says
+"No active project"), Vite refuses to run with a non-`demo-` project, and the app refuses to
+start if the emulator setting and the project ID don't match.
+
 ## Structure
 
 ```

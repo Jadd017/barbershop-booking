@@ -56,7 +56,7 @@ let env: RulesTestEnvironment;
 
 beforeAll(async () => {
   env = await initializeTestEnvironment({
-    projectId: 'eddy-barbershop',
+    projectId: 'demo-barbershop',
     firestore: { rules: readFileSync('firestore.rules', 'utf8') },
   });
 });
