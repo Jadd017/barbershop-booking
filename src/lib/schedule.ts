@@ -102,23 +102,26 @@ export function fitsDayHours(
   );
 }
 
-function describeDay(hours: DayHours): string {
+/** One weekday of hours: a barber's (with breaks) or the shop's opening hours (without). */
+type WeekdayHours = Pick<DayHours, 'closed' | 'start' | 'end'> & { breaks?: DayHours['breaks'] };
+
+function describeDay(hours: WeekdayHours): string {
   if (hours.closed) return 'closed';
-  const breaks = hours.breaks.map((b) => `${b.start}–${b.end}`).join(', ');
+  const breaks = (hours.breaks ?? []).map((b) => `${b.start}–${b.end}`).join(', ');
   return `${hours.start}–${hours.end}${breaks ? ` (break ${breaks})` : ''}`;
 }
 
 /**
- * The week's hours, with consecutive days that share hours grouped:
+ * A week of hours (7 days, Monday first), with consecutive days that share hours grouped:
  * ["Mon–Sat 10:00–20:00 (break 14:00–15:00)", "Sun closed"].
  */
-export function weeklyHoursSummary(settings: Settings): string[] {
+export function weeklyHoursSummary(weeklyHours: WeekdayHours[]): string[] {
   const short = WEEKDAY_NAMES.map((n) => n.slice(0, 3));
   const lines: string[] = [];
   let first = 0;
   for (let i = 1; i <= 7; i++) {
-    const description = describeDay(settings.weeklyHours[first]);
-    if (i < 7 && describeDay(settings.weeklyHours[i]) === description) continue;
+    const description = describeDay(weeklyHours[first]);
+    if (i < 7 && describeDay(weeklyHours[i]) === description) continue;
     const days = first === i - 1 ? short[first] : `${short[first]}–${short[i - 1]}`;
     lines.push(first === 0 && i === 7 ? `Every day ${description}` : `${days} ${description}`);
     first = i;

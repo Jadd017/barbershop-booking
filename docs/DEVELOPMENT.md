@@ -45,6 +45,23 @@ npm run test:emu  # rules + data-layer tests in the emulators (alias: test:rules
 npm run build     # type-check + build, emulator config
 ```
 
+### Customer flow on the emulator
+
+With `npm run emu`, `npm run seed` and `npm run dev` running, in a phone-sized window
+(browser dev tools → device toolbar, e.g. 390 × 844):
+
+1. The header says "Demo Barbershop" (also the tab title), with today's opening hours.
+2. Pick a service: the Barber step shows "Any barber" and initials cards for Tony, Karim Haddad,
+   Sami, Omar and Fadi.
+3. Pick a barber and the demo day (the next open day): times follow his hours, breaks and
+   bookings (Karim: booked 10:00–10:45 and 11:00, break 13:00–13:30; Sami starts at 12:00 and
+   is blocked 16:00–17:00; Omar is off that day, so it shows closed for him).
+4. "Any barber" shows a time if anyone is free (e.g. 12:45, where Karim and Sami can't).
+5. Pick a time: the bottom bar shows the barber. Book now → the emulator's fake Google sign-in
+   → name and phone → the confirmation names the barber ("You're booked with …" for Any barber),
+   and the WhatsApp message goes to the shop's number with the barber's name.
+6. My bookings lists it "With <barber>", and cancelling frees the time.
+
 Safety (details in ARCHITECTURE.md, 3.2): `.firebaserc` has no projects (so `firebase deploy`
 says "No active project"); `npm run deploy -- <shop>` refuses without a named shop from
 `.firebaserc`; every `firebase deploy` runs `scripts/deploy-guard.mjs` first, which refuses

@@ -4,19 +4,21 @@ import { Link } from 'react-router';
 import { formatPrice, isSafeLink } from '../lib/shop';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
-import type { ConfirmedBooking } from '../types';
+import type { ShopConfirmedBooking } from '../types';
 import { BarberPole, buttonOutline, linkButton } from './ui';
 
 interface Props {
-  booking: ConfirmedBooking;
-  barberName: string;
+  booking: ShopConfirmedBooking;
+  shopName: string;
+  /** The shop's WhatsApp number the booking is sent to; empty until the owner sets one. */
+  whatsapp: string;
   /** From the settings; "Get directions" only shows for a safe https link. */
   mapsUrl: string;
   shopAddress: string;
   onDone: () => void;
 }
 
-export function Confirmation({ booking, barberName, mapsUrl, shopAddress, onDone }: Props) {
+export function Confirmation({ booking, shopName, whatsapp, mapsUrl, shopAddress, onDone }: Props) {
   const [copied, setCopied] = useState(false);
   const end = minutesToTime(timeToMinutes(booking.startTime) + booking.durationMinutes);
   const canCopy = typeof navigator !== 'undefined' && !!navigator.clipboard;
@@ -32,6 +34,7 @@ export function Confirmation({ booking, barberName, mapsUrl, shopAddress, onDone
   }
 
   const rows: [string, string][] = [
+    ['Barber', booking.barberName],
     ['Service', `${booking.serviceName} · ${booking.durationMinutes} min`],
     ...(booking.price !== undefined ? [['Price', formatPrice(booking.price)] as [string, string]] : []),
     ['Day', formatDayLong(booking.date)],
@@ -48,9 +51,12 @@ export function Confirmation({ booking, barberName, mapsUrl, shopAddress, onDone
         >
           <Check size={32} strokeWidth={2.5} />
         </div>
-        <h1 className="caps mb-2 text-3xl font-semibold">Almost done</h1>
+        <h1 className="caps mb-2 text-3xl font-semibold">{whatsapp ? 'Almost done' : 'Booked'}</h1>
         <p role="alert" className="mb-6 text-ink">
-          Send your booking to {barberName} on WhatsApp to complete it.
+          {booking.anyBarber && `You're booked with ${booking.barberName}. `}
+          {whatsapp
+            ? `Send your booking to ${shopName} on WhatsApp to complete it.`
+            : `See you at ${shopName}.`}
         </p>
 
         {/* The ticket: details, a perforated line, then the code. */}
@@ -91,17 +97,21 @@ export function Confirmation({ booking, barberName, mapsUrl, shopAddress, onDone
           </div>
         </div>
 
-        {/* Same tab, no target="_blank": the most reliable way to hand off to the app on mobile. */}
-        <a
-          href={bookingWhatsappLink(booking, barberName)}
-          className="caps mb-2 flex min-h-16 items-center justify-center gap-3 rounded-2xl bg-whatsapp px-6 text-2xl font-semibold text-white shadow-md hover:brightness-110"
-        >
-          <MessageCircle aria-hidden size={24} />
-          Send to {barberName}
-        </a>
-        <p className="mb-8 text-sm text-muted-strong">
-          If WhatsApp didn't open, tap the button above.
-        </p>
+        {whatsapp && (
+          <>
+            {/* Same tab, no target="_blank": the most reliable way to hand off to the app on mobile. */}
+            <a
+              href={bookingWhatsappLink(booking, shopName, whatsapp)}
+              className="caps mb-2 flex min-h-16 items-center justify-center gap-3 rounded-2xl bg-whatsapp px-6 text-2xl font-semibold text-white shadow-md hover:brightness-110"
+            >
+              <MessageCircle aria-hidden size={24} />
+              Send on WhatsApp
+            </a>
+            <p className="mb-8 text-sm text-muted-strong">
+              If WhatsApp didn't open, tap the button above.
+            </p>
+          </>
+        )}
 
         <div className="flex flex-col items-center gap-3">
           <Link to="/my-bookings" className={`${buttonOutline} w-full`}>

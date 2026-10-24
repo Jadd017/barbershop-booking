@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phases 0–3 done; Phases 4–9 not started.** Since Phase 2 the rules are the multi-barber ones, so today's single-barber pages no longer work against the emulator until Phases 3–4 switch them over. Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–4 done; Phases 5–9 not started.** The customer pages use the new data layer; the staff pages (`/admin`) still use the single-barber `api.ts` until Phases 5–6. Since Phase 2 the rules are the multi-barber ones, so today's single-barber pages no longer work against the emulator until Phases 3–4 switch them over. Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -604,10 +604,13 @@ barber at the same time → exactly one wins; two moves onto the same free slot 
 owner creates a login and is still signed in as owner (real Auth emulator), "New login" makes the
 old password stop working, the seeded demo shop is bookable. `rules-tests/data.test.ts`.
 
-**Phase 4 – Customer flow**
+**Phase 4 – Customer flow** ✅
 Barber step with initials cards + Any, per-barber times, shop name/logo in header and tab title,
 confirmation and WhatsApp with shop and barber name, My bookings shows barber.
-*Test:* `npm test`; manual checklist on `npm run dev` with seeded data, on a phone-sized window.
+*Test:* `npm test`; manual checklist in `docs/DEVELOPMENT.md` ("Customer flow on the emulator").
+Also: the shop's colors replace the theme's charcoal/brass/cream at runtime (`ShopTheme`), the
+shop's WhatsApp number comes from `settings/shop` (the `VITE_BARBER_WHATSAPP` env var is gone),
+and the emulator's Auth banner is hidden (it covered the booking bar on phones).
 
 **Phase 5 – Staff login and barber dashboard**
 Username login, role routing, Today / Calendar for his bookings, done/no-show, walk-ins, cancel,

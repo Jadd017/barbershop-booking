@@ -2,14 +2,16 @@ import type { User } from 'firebase/auth';
 import { CalendarDays, LogOut } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
-import { hoursOn } from '../lib/schedule';
-import type { DateKey, Settings } from '../types';
+import { useBranding } from '../hooks/useShop';
+import { shopHoursOn } from '../lib/barberSchedule';
+import type { DateKey, ShopSettings } from '../types';
 import { BarberPole } from './ui';
 
 interface Props {
-  barberName: string;
+  /** The shop's name; empty while the settings load. */
+  shopName: string;
   /** Shows "Open today …" / "Closed today" when given. */
-  settings?: Settings;
+  shop?: ShopSettings;
   today?: DateKey;
   /** The right-hand pill; defaults to "My bookings". */
   action?: ReactNode;
@@ -17,20 +19,23 @@ interface Props {
   onSignOut?: () => void;
 }
 
-/** The charcoal header of the customer pages: "EDDY'S BARBERSHOP", today's hours, account. */
-export function ShopHeader({ barberName, settings, today, action, customer, onSignOut }: Props) {
-  const hours = settings && today ? hoursOn(settings, today) : undefined;
+/** The dark header of the customer pages: the shop's logo and name, today's hours, account. */
+export function ShopHeader({ shopName, shop, today, action, customer, onSignOut }: Props) {
+  const branding = useBranding();
+  const logo = branding?.logo ?? null;
+  const hours = shop && today ? shopHoursOn(shop, today) : undefined;
   return (
     <header className="bg-charcoal text-cream">
       <BarberPole />
       <div className="mx-auto max-w-xl px-4 pb-5 pt-4">
         <div className="flex items-start justify-between gap-3">
-          <Link to="/" className="leading-none">
-            <span className="caps block text-4xl font-semibold tracking-[0.12em]">
-              {barberName}'s
-            </span>
-            <span className="caps mt-1 block text-sm font-medium tracking-[0.35em] text-brass">
-              Barbershop
+          <Link to="/" className="flex min-w-0 items-center gap-3 leading-none">
+            {logo && (
+              // The logo is decorative next to the name, which says the same.
+              <img src={logo} alt="" className="h-14 w-14 shrink-0 rounded-xl object-contain" />
+            )}
+            <span className="caps min-w-0 break-words text-3xl font-semibold tracking-[0.1em]">
+              {shopName}
             </span>
           </Link>
           {action ?? (

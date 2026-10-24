@@ -62,9 +62,10 @@ export const db = getFirestore(app);
 export const auth = getAuth(app);
 
 if (useEmulator) {
-  // Ports from firebase.json.
+  // Ports from firebase.json. No Auth warning banner: it covers the booking bar on phones, and
+  // the console line above already says this is the emulator.
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
-  connectAuthEmulator(auth, AUTH_EMULATOR_URL);
+  connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
 }
 
 /** The app's own Firestore and signed-in user, for the multi-barber data layer (./store.ts). */

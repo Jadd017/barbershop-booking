@@ -5,32 +5,34 @@ import {
   MAX_ACTIVE_BOOKINGS_PER_PHONE,
   MAX_NAME_LENGTH,
 } from '../config';
+import { createBooking, getCustomerProfile } from '../data/bookings';
 import {
-  createBooking,
-  getCustomerProfile,
   NotBookableError,
   SignInRequiredError,
   SlotTakenError,
   TimePassedError,
   TooManyBookingsError,
-} from '../data/api';
+} from '../data/errors';
+import { store } from '../data/firebase';
 import { formatLebanesePhone, normalizeLebanesePhone } from '../lib/phone';
 import { formatPrice } from '../lib/shop';
 import { formatDayLong } from '../lib/time';
-import type { ConfirmedBooking, DateKey, Service, TimeString } from '../types';
+import type { Barber, DateKey, Service, ShopConfirmedBooking, TimeString } from '../types';
 import { buttonBrass, buttonOutline, inputBase, Notice } from './ui';
 
 interface Props {
   /** The signed-in Google customer the booking is for. */
   customer: User;
   service: Service;
+  /** The chosen barber, or null for "Any barber". */
+  barber: Barber | null;
   date: DateKey;
   startTime: TimeString;
-  onBooked: (booking: ConfirmedBooking) => void;
+  onBooked: (booking: ShopConfirmedBooking) => void;
   onCancel: () => void;
 }
 
-export function BookingForm({ customer, service, date, startTime, onBooked, onCancel }: Props) {
+export function BookingForm({ customer, service, barber, date, startTime, onBooked, onCancel }: Props) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
   const { uid, displayName } = customer;
   useEffect(() => {
     let active = true;
-    getCustomerProfile(uid)
+    getCustomerProfile(store, uid)
       .then((profile) => {
         if (!active) return;
         const fallbackName = (displayName ?? '').slice(0, MAX_NAME_LENGTH).trim();
@@ -72,18 +74,23 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
 
     setSubmitting(true);
     try {
-      const booking = await createBooking({
+      const booking = await createBooking(store, {
         name: trimmedName,
         phone: normalizedPhone,
         service,
         date,
         startTime,
+        barberId: barber?.id ?? null,
       });
       onBooked(booking);
     } catch (err) {
       if (err instanceof SlotTakenError) {
         setSlotLost(true);
-        setSubmitError('Sorry, this time was just taken, please pick another.');
+        setSubmitError(
+          barber
+            ? `Sorry, this time with ${barber.name} was just taken, please pick another.`
+            : 'Sorry, every barber is now taken at this time, please pick another.',
+        );
       } else if (err instanceof TimePassedError) {
         setSlotLost(true);
         setSubmitError('Sorry, this time has already passed, please pick another.');
@@ -122,6 +129,7 @@ export function BookingForm({ customer, service, date, startTime, onBooked, onCa
           {service.price !== undefined && ` · ${formatPrice(service.price)}`} · {formatDayLong(date)}{' '}
           at {startTime}
         </p>
+        <p className="text-sm text-ink">{barber ? `With ${barber.name}` : 'With any barber who is free'}</p>
         <p className="mb-5 break-all text-sm text-muted-strong">Booking as {customer.email}</p>
 
         <label className="mb-4 block">

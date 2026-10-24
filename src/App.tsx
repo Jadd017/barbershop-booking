@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
+import { ShopTheme } from './components/ShopTheme';
 import { AdminPage } from './pages/AdminPage';
 import { BookingPage } from './pages/BookingPage';
 import { MyBookingsPage } from './pages/MyBookingsPage';
@@ -6,6 +7,7 @@ import { MyBookingsPage } from './pages/MyBookingsPage';
 export default function App() {
   return (
     <BrowserRouter>
+      <ShopTheme />
       <Routes>
         <Route path="/" element={<BookingPage />} />
         <Route path="/my-bookings" element={<MyBookingsPage />} />

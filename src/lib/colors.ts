@@ -52,3 +52,28 @@ export function brandingErrors(branding: Branding): string[] {
   }
   return errors;
 }
+
+/** `hex` moved `amount` (0–1) of the way to white. */
+export function lighten(hex: string, amount: number): string {
+  const channel = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16);
+    return Math.round(c + (255 - c) * amount)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${channel(1)}${channel(3)}${channel(5)}`.toUpperCase();
+}
+
+/**
+ * The Tailwind theme variables (src/index.css) the shop's colors replace: the dark color is
+ * the charcoal, the accent the brass (and a lighter brass for text on the dark color), the light
+ * color the cream background.
+ */
+export function themeVariables(colors: BrandColors): Record<string, string> {
+  return {
+    '--color-charcoal': colors.dark,
+    '--color-brass': colors.accent,
+    '--color-brass-light': lighten(colors.accent, 0.35),
+    '--color-cream': colors.light,
+  };
+}

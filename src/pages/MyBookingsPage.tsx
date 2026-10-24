@@ -1,5 +1,5 @@
 import type { User } from 'firebase/auth';
-import { ArrowLeft, Clock, Scissors } from 'lucide-react';
+import { ArrowLeft, Clock, Scissors, UserRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { ShopHeader } from '../components/ShopHeader';
@@ -12,13 +12,9 @@ import {
   SectionLabel,
   StatusChip,
 } from '../components/ui';
-import {
-  AlreadyCancelledError,
-  cancelMyBooking,
-  NotCancellableError,
-  subscribeMyBookings,
-  TimePassedError,
-} from '../data/api';
+import { cancelMyBooking, subscribeMyBookings } from '../data/bookings';
+import { AlreadyCancelledError, NotCancellableError, TimePassedError } from '../data/errors';
+import { store } from '../data/firebase';
 import {
   finishRedirectSignIn,
   isInAppBrowser,
@@ -27,26 +23,25 @@ import {
   signOutCustomer,
 } from '../data/auth';
 import { useCustomer } from '../hooks/useCustomer';
-import { useSettings } from '../hooks/useSettings';
+import { useShop } from '../hooks/useShop';
 import { clearLastBooking, loadLastBooking } from '../lib/lastBooking';
-import { DEFAULT_SETTINGS } from '../lib/settingsDoc';
 import { isPast } from '../lib/slots';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../lib/time';
-import type { BookingStatus, CustomerBooking } from '../types';
+import type { BookingStatus, ShopCustomerBooking } from '../types';
 
-/** Customers see "Missed" rather than Eddy's "No-show". */
+/** Customers see "Missed" rather than the barber's "No-show". */
 const STATUS_LABELS: Partial<Record<BookingStatus, string>> = { 'no-show': 'Missed' };
 
 const GENERIC_ERROR = 'Something went wrong. Check your connection and try again.';
 
 /** Still ahead and "booked", so it can be cancelled. */
-function isUpcoming(b: CustomerBooking): boolean {
+function isUpcoming(b: ShopCustomerBooking): boolean {
   return b.status === 'booked' && !isPast(b.date, b.startTime);
 }
 
 export function MyBookingsPage() {
   const customer = useCustomer();
-  const { settings } = useSettings();
+  const { shop } = useShop();
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
 
@@ -69,7 +64,7 @@ export function MyBookingsPage() {
   return (
     <div className="min-h-screen pb-16">
       <ShopHeader
-        barberName={settings?.barberName ?? DEFAULT_SETTINGS.barberName}
+        shopName={shop?.shopName ?? ''}
         customer={customer}
         onSignOut={() => signOutCustomer().catch(console.error)}
         action={
@@ -113,13 +108,14 @@ export function MyBookingsPage() {
 
 function BookingList({ customer }: { customer: User }) {
   // Tagged with whose they are, so another account's list is never shown after switching.
-  const [bookings, setBookings] = useState<{ uid: string; items: CustomerBooking[] } | null>(null);
+  const [bookings, setBookings] = useState<{ uid: string; items: ShopCustomerBooking[] } | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [justCancelled, setJustCancelled] = useState(false);
   const { uid } = customer;
 
   useEffect(() => {
     return subscribeMyBookings(
+      store,
       uid,
       (items) => {
         setBookings({ uid, items });
@@ -182,7 +178,7 @@ function BookingList({ customer }: { customer: User }) {
 }
 
 interface ItemProps {
-  booking: CustomerBooking;
+  booking: ShopCustomerBooking;
   onCancelled: () => void;
 }
 
@@ -199,7 +195,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
     setError(null);
     setCancelling(true);
     try {
-      await cancelMyBooking(booking.bookingCode);
+      await cancelMyBooking(store, booking.bookingCode);
       // Don't bring back the confirmation screen for a booking that no longer exists.
       if (loadLastBooking()?.booking.bookingCode === booking.bookingCode) clearLastBooking();
       onCancelled();
@@ -232,6 +228,10 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
           <p className="flex items-center gap-1.5 text-sm">
             <Scissors aria-hidden size={14} className="text-muted" />
             {booking.serviceName} · {booking.durationMinutes} min
+          </p>
+          <p className="flex items-center gap-1.5 text-sm">
+            <UserRound aria-hidden size={14} className="text-muted" />
+            With {booking.barberName}
           </p>
         </div>
         <StatusChip status={booking.status} label={STATUS_LABELS[booking.status]} />

@@ -1,7 +1,14 @@
 /** Initials circles, logo compression and brand colors. */
 import { describe, expect, it } from 'vitest';
 import { MAX_LOGO_BYTES, MAX_LOGO_DATA_URL_LENGTH } from '../config';
-import { brandingErrors, contrastRatio, contrastWarnings, isHexColor } from './colors';
+import {
+  brandingErrors,
+  contrastRatio,
+  contrastWarnings,
+  isHexColor,
+  lighten,
+  themeVariables,
+} from './colors';
 import { initials } from './initials';
 import { LogoTooLargeError, compressLogo, fitWithin, isLogoDataUrl } from './logo';
 import { DEFAULT_COLORS } from './shopDoc';
@@ -129,5 +136,22 @@ describe('colors', () => {
         'The logo must be a WebP, JPEG or PNG image under 100 KB.',
         'Colors must be like #1E1B18.',
       ]);
+  });
+});
+
+describe('theme colors', () => {
+  it('lightens towards white', () => {
+    expect(lighten('#000000', 0.5)).toBe('#808080');
+    expect(lighten('#B8893C', 0)).toBe('#B8893C');
+    expect(lighten('#B8893C', 1)).toBe('#FFFFFF');
+  });
+
+  it("maps the shop's colors onto the theme variables", () => {
+    expect(themeVariables({ dark: '#101010', accent: '#000000', light: '#FAFAFA' })).toEqual({
+      '--color-charcoal': '#101010',
+      '--color-brass': '#000000',
+      '--color-brass-light': '#595959',
+      '--color-cream': '#FAFAFA',
+    });
   });
 });

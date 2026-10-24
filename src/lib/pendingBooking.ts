@@ -1,5 +1,5 @@
 /**
- * Remembers the service, day and time chosen before signing in with Google, so they
+ * Remembers the service, barber, day and time chosen before signing in with Google, so they
  * survive a redirect sign-in (which reloads the page). Session storage: this tab only.
  */
 import type { DateKey, TimeString } from '../types';
@@ -8,6 +8,8 @@ const STORAGE_KEY = 'pendingBooking';
 
 export interface PendingBooking {
   serviceId: string;
+  /** null: "Any barber". */
+  barberId: string | null;
   day: DateKey;
   time: TimeString;
 }
@@ -25,7 +27,9 @@ export function loadPendingBooking(): PendingBooking | null {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const value = JSON.parse(raw) as PendingBooking;
-    const valid = [value?.serviceId, value?.day, value?.time].every((v) => typeof v === 'string');
+    const valid =
+      [value?.serviceId, value?.day, value?.time].every((v) => typeof v === 'string') &&
+      (value.barberId === null || typeof value.barberId === 'string');
     return valid ? value : null;
   } catch {
     return null;
