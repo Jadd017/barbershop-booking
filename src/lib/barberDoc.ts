@@ -6,6 +6,7 @@
  * A day doc keeps each taken 15-min slot under its "HHMM" key, so firestore.rules can find a
  * booking's slots with plain map lookups.
  */
+import type { Timestamp } from 'firebase/firestore';
 import type { Barber, BarberDay, DateKey, DayHours, OpeningHours, TimeString } from '../types';
 import { dayHoursFromDoc, dayHoursToDoc, type DayHoursDoc } from './shopDoc';
 
@@ -30,6 +31,8 @@ export interface DayDoc {
   blocked: Record<string, true>;
   /** The booking the latest change to `booked` was for (see firestore.rules). */
   lastBookingId?: string;
+  /** When `booked` last changed: the rules check a cancel or move changed it in the same write. */
+  bookingAt?: Timestamp;
 }
 
 /** A new barber's hours: the shop's opening hours, without breaks. */
@@ -92,7 +95,7 @@ export function fromDayDoc(doc: DayDoc): BarberDay {
   };
 }
 
-/** The maps of a day doc for `day` (barberId, date and lastBookingId are set by api.ts). */
+/** The maps of a day doc for `day` (barberId, date, lastBookingId and bookingAt are set by api.ts). */
 export function toDayMaps(day: BarberDay): Pick<DayDoc, 'booked' | 'blocked'> {
   return {
     booked: Object.fromEntries([...day.booked].map(([time, id]) => [slotKey(time), id])),

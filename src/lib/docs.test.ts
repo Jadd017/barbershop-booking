@@ -19,6 +19,7 @@ import {
   defaultBranding,
   fromBrandingDoc,
   fromShopDoc,
+  periodDaysOf,
   toBrandingDoc,
   toShopDoc,
 } from './shopDoc';
@@ -121,5 +122,16 @@ describe('days/{barberId}_{date}', () => {
   it('counts bookings, not slots', () => {
     expect(bookingCount(day('karim', { A: ['09:30', '09:45'], B: ['16:00'] }, ['18:00']))).toBe(2);
     expect(bookingCount(day('karim'))).toBe(0);
+  });
+});
+
+describe('settings/shop periodDays (for the booking rule)', () => {
+  it('maps every day of each special period to its days ahead, the longest where they overlap', () => {
+    const days = periodDaysOf([
+      { name: 'A', start: '1970-01-02', end: '1970-01-04', daysAhead: 7 },
+      { name: 'B', start: '1970-01-04', end: '1970-01-05', daysAhead: 10 },
+    ]);
+    expect(days).toEqual({ 1: 7, 2: 7, 3: 10, 4: 10 });
+    expect(toShopDoc({ ...SHOP, specialPeriods: [] }).periodDays).toEqual({});
   });
 });

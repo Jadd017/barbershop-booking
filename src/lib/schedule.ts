@@ -9,12 +9,13 @@ import {
   MAX_MAPS_URL_LENGTH,
   MAX_PRICE,
   MAX_SERVICE_MINUTES,
+  MAX_SPECIAL_PERIOD_DAYS,
   MAX_SPECIAL_PERIODS,
   SLOT_MINUTES,
 } from '../config';
 import type { DateKey, DayHours, Service, Settings, SpecialPeriod, TimeString } from '../types';
 import { isSafeLink } from './shop';
-import { fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
+import { dayNumber, fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
 
 export const WEEKDAY_NAMES = [
   'Monday',
@@ -225,6 +226,8 @@ export function windowErrors(settings: WindowSettings): string[] {
     if (!period.name.trim()) errors.push('Every special period needs a name.');
     if (!period.start || !period.end || period.start > period.end) {
       errors.push(`${name}: the end date must be on or after the start date.`);
+    } else if (dayNumber(period.end) - dayNumber(period.start) + 1 > MAX_SPECIAL_PERIOD_DAYS) {
+      errors.push(`${name}: a special period can be at most ${MAX_SPECIAL_PERIOD_DAYS} days.`);
     }
     if (!isWholeDays(period.daysAhead, MAX_BOOKING_WINDOW_DAYS)) {
       errors.push(`${name}: days ahead must be 1 to ${MAX_BOOKING_WINDOW_DAYS}.`);

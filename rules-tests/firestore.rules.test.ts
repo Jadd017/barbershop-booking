@@ -1,6 +1,6 @@
 /**
- * Tests for firestore.rules against the Firestore emulator.
- * Run with `npm run test:rules` (needs Java 21+ for the emulator).
+ * Tests for firestore.rules (the multi-barber shop) against the Firestore emulator.
+ * Run with `npm run test:emu` (needs Java 21+ for the emulator).
  */
 import {
   assertFails,
@@ -25,19 +25,20 @@ import {
 } from 'firebase/firestore';
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
-import { ADMIN_UID, SHOP_TIME_ZONE } from '../src/config';
+import { SHOP_TIME_ZONE } from '../src/config';
+import { dayDocId, hoursFromShop, slotKey, toBarberDoc } from '../src/lib/barberDoc';
 import { weekdayIndex } from '../src/lib/schedule';
-import { DEFAULT_SETTINGS, toSettingsDoc } from '../src/lib/settingsDoc';
+import { DEFAULT_COLORS, defaultShopSettings, toShopDoc } from '../src/lib/shopDoc';
 import { slotsNeeded } from '../src/lib/slots';
 import { addDays, zonedInstant } from '../src/lib/time';
-import type { DayHours, Settings } from '../src/types';
+import type { Barber, DayHours, ShopSettings } from '../src/types';
 
 const SERVICES = {
   beard: { id: 'beard', name: 'Beard', durationMinutes: 15 },
   haircut: { id: 'haircut', name: 'Haircut', durationMinutes: 30 },
   haircutBeard: { id: 'haircut-beard', name: 'Haircut + Beard', durationMinutes: 45 },
 };
-type ServiceInfo = (typeof SERVICES)[keyof typeof SERVICES];
+type ServiceInfo = (typeof SERVICES)[keyof typeof SERVICES] | { id: string; name: string; durationMinutes: number };
 
 const PHONE = '+96170123456';
 const OTHER_PHONE = '+9613123456';
@@ -51,6 +52,44 @@ type CustomerInfo = typeof RAMI;
 /** Today's date in Beirut, whatever time zone the tests run in. */
 const TODAY = new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TIME_ZONE }).format(new Date());
 const TOMORROW = addDays(TODAY, 1);
+
+/** Open 10:00–20:00 every day; Haircut 30, Beard 15, Haircut + Beard 45; 4 days ahead. */
+const SHOP: ShopSettings = { ...defaultShopSettings('Sassine Maatouk'), whatsapp: '+96171000000' };
+
+/** Works the shop's hours with a 14:00–15:00 break. */
+function makeBarber(id: string, name: string, order: number): Barber {
+  return {
+    id,
+    name,
+    active: true,
+    order,
+    weeklyHours: hoursFromShop(SHOP.openingHours).map((d) => ({
+      ...d,
+      breaks: [{ start: '14:00', end: '15:00' }],
+    })),
+    daysOff: [],
+  };
+}
+
+const BARBERS = {
+  sassine: makeBarber('sassine', 'Sassine', 0),
+  karim: makeBarber('karim', 'Karim', 1),
+  sami: makeBarber('sami', 'Sami', 2),
+};
+
+/** Staff logins: the owner (also a barber) and two barbers. */
+interface StaffInfo {
+  uid: string;
+  username: string;
+  barberId: string;
+  role: 'owner' | 'barber';
+}
+const OWNER: StaffInfo = { uid: 'owner-uid', username: 'sassine', barberId: 'sassine', role: 'owner' };
+const KARIM: StaffInfo = { uid: 'karim-uid', username: 'karim', barberId: 'karim', role: 'barber' };
+const SAMI: StaffInfo = { uid: 'sami-uid', username: 'sami', barberId: 'sami', role: 'barber' };
+
+/** The internal email of a login (docs/ARCHITECTURE.md, 5.1). */
+const loginEmail = (username: string, suffix = 'ab12') => `${username}.${suffix}@staff.invalid`;
 
 const RULES = readFileSync('firestore.rules', 'utf8');
 
@@ -78,77 +117,120 @@ async function withRules(rules: string, fn: () => Promise<unknown>) {
 
 afterAll(() => env.cleanup());
 
-beforeEach(async () => {
-  await env.clearFirestore();
-  // Every day 10:00–20:00, break 14:00–15:00; Haircut 30, Beard 15, Haircut + Beard 45; 4 days ahead.
-  await seedSettings();
-});
-
-/** Puts settings/shop in the database (the defaults plus `change`), bypassing the rules. */
-function seedSettings(change: Partial<Settings> = {}) {
-  return env.withSecurityRulesDisabled((ctx) =>
-    setDoc(doc(ctx.firestore() as unknown as Firestore, 'settings', 'shop'), {
-      ...toSettingsDoc({ ...DEFAULT_SETTINGS, ...change }),
-      updatedAt: Timestamp.now(),
+// The contexts return compat instances; the modular functions accept them at runtime.
+const asDb = (ctx: { firestore(): unknown }) => ctx.firestore() as unknown as Firestore;
+const anyone = () => asDb(env.unauthenticatedContext());
+/** Signed in with Google, as customers are. */
+const customer = (c: CustomerInfo) =>
+  asDb(env.authenticatedContext(c.uid, { email: c.email, firebase: { sign_in_provider: 'google.com' } }));
+const rami = () => customer(RAMI);
+const sara = () => customer(SARA);
+/** Signed in with username + password. */
+const staffUser = (s: { uid: string; username: string }) =>
+  asDb(
+    env.authenticatedContext(s.uid, {
+      email: loginEmail(s.username),
+      firebase: { sign_in_provider: 'password' },
     }),
+  );
+const owner = () => staffUser(OWNER);
+const karim = () => staffUser(KARIM);
+const sami = () => staffUser(SAMI);
+/** Someone who made an email/password account on their own: no staff doc. */
+const stranger = () => staffUser({ uid: 'stranger-uid', username: 'stranger' });
+/** The owner's UID, but signed in with Google instead of his password. */
+const ownerViaGoogle = () =>
+  asDb(env.authenticatedContext(OWNER.uid, { email: 'x@gmail.com', firebase: { sign_in_provider: 'google.com' } }));
+
+/** Runs `fn` with the rules off, to set up data. */
+function seed(fn: (db: Firestore) => Promise<unknown>) {
+  return env.withSecurityRulesDisabled((ctx) => fn(asDb(ctx)).then(() => undefined));
+}
+
+function seedShop(change: Partial<ShopSettings> = {}) {
+  return seed((db) =>
+    setDoc(doc(db, 'settings', 'shop'), { ...toShopDoc({ ...SHOP, ...change }), updatedAt: Timestamp.now() }),
   );
 }
 
-/** The default weekly hours with `date`'s weekday replaced by `hours`. */
-function hoursWith(date: string, hours: Partial<DayHours>): DayHours[] {
-  return DEFAULT_SETTINGS.weeklyHours.map((d, i) => (i === weekdayIndex(date) ? { ...d, ...hours } : d));
+function seedBarber(barber: Barber) {
+  return seed((db) =>
+    setDoc(doc(db, 'barbers', barber.id), { ...toBarberDoc(barber), updatedAt: Timestamp.now() }),
+  );
 }
 
-// The contexts return compat instances; the modular functions accept them at runtime.
-const anyone = () => env.unauthenticatedContext().firestore() as unknown as Firestore;
-const admin = () =>
-  env
-    .authenticatedContext(ADMIN_UID, { email: 'eddy@example.com', firebase: { sign_in_provider: 'password' } })
-    .firestore() as unknown as Firestore;
-/** Signed in with Google, as customers are. */
-const signedIn = (c: CustomerInfo) =>
-  env
-    .authenticatedContext(c.uid, { email: c.email, firebase: { sign_in_provider: 'google.com' } })
-    .firestore() as unknown as Firestore;
-const rami = () => signedIn(RAMI);
-const sara = () => signedIn(SARA);
-/** Someone who made an email/password account (not Eddy, not Google). */
-const passwordUser = () =>
-  env
-    .authenticatedContext(RAMI.uid, { email: RAMI.email, firebase: { sign_in_provider: 'password' } })
-    .firestore() as unknown as Firestore;
+function seedStaff(s: StaffInfo, change: Record<string, unknown> = {}) {
+  return seed(async (db) => {
+    await setDoc(doc(db, 'staff', s.uid), {
+      username: s.username,
+      barberId: s.barberId,
+      role: s.role,
+      active: true,
+      createdAt: Timestamp.now(),
+      ...change,
+    });
+    await setDoc(doc(db, 'usernames', s.username), { uid: s.uid, email: loginEmail(s.username) });
+  });
+}
 
-function slotId(date: string, time: string) {
-  return `${date}_${time.replace(':', '')}`;
+beforeEach(async () => {
+  await env.clearFirestore();
+  await seedShop();
+  for (const b of Object.values(BARBERS)) await seedBarber(b);
+  for (const s of [OWNER, KARIM, SAMI]) await seedStaff(s);
+});
+
+/** `barber`'s weekly hours with `date`'s weekday replaced by `hours`. */
+function hoursWith(barber: Barber, date: string, hours: Partial<DayHours>): DayHours[] {
+  return barber.weeklyHours.map((d, i) => (i === weekdayIndex(date) ? { ...d, ...hours } : d));
 }
 
 function startAt(date: string, time: string) {
   return Timestamp.fromDate(zonedInstant(date, time, SHOP_TIME_ZONE));
 }
 
+const dayRef = (db: Firestore, barberId: string, date: string) =>
+  doc(db, 'days', dayDocId(barberId, date));
+
+/** A day doc's maps as stored, or empty ones. */
+async function dayMaps(db: Firestore, barberId: string, date: string) {
+  const data = (await getDoc(dayRef(db, barberId, date))).data();
+  return {
+    booked: { ...(data?.booked ?? {}) } as Record<string, string>,
+    blocked: { ...(data?.blocked ?? {}) } as Record<string, true>,
+  };
+}
+
 interface BookingOptions {
   code?: string;
+  barberId?: string;
+  /** Defaults to the barber's name. */
+  barberName?: string;
   phone?: string | null;
   /** Whose booking it is; null for a walk-in. */
   customer?: CustomerInfo | null;
   service?: ServiceInfo;
   date?: string;
   time?: string;
+  anyBarber?: boolean;
   /** Phone seat to take (1 or 2), or null for none. */
   seat?: 1 | 2 | null;
   /** Account seat to take (1 or 2), or null for none. */
   accountSeat?: 1 | 2 | null;
-  /** Slot times to write; defaults to every slot the service needs. */
+  /** Slot times to claim in the day doc; defaults to every slot the service needs. */
   slots?: string[];
   /** Fields to override or add on the booking doc. */
   fields?: Record<string, unknown>;
+  /** Fields to override on the day doc, or null to not write it at all. */
+  day?: Record<string, unknown> | null;
 }
 
 function bookingFields(o: BookingOptions = {}) {
   const service = o.service ?? SERVICES.haircut;
   const date = o.date ?? TOMORROW;
   const time = o.time ?? '11:00';
-  const customer = o.customer === undefined ? RAMI : o.customer;
+  const barberId = o.barberId ?? 'karim';
+  const who = o.customer === undefined ? RAMI : o.customer;
   return {
     name: 'Rami',
     phone: o.phone === undefined ? PHONE : o.phone,
@@ -161,8 +243,14 @@ function bookingFields(o: BookingOptions = {}) {
     bookingCode: o.code ?? 'ABC234',
     status: 'booked',
     createdAt: serverTimestamp(),
-    customerUid: customer?.uid ?? null,
-    customerEmail: customer?.email ?? null,
+    customerUid: who?.uid ?? null,
+    customerEmail: who?.email ?? null,
+    barberId,
+    barberName: o.barberName ?? BARBERS[barberId as keyof typeof BARBERS]?.name ?? barberId,
+    anyBarber: o.anyBarber ?? false,
+    // The seats the booking takes; walk-ins take none.
+    phoneSeat: who ? (o.seat === undefined ? 1 : o.seat) : null,
+    accountSeat: who ? (o.accountSeat === undefined ? 1 : o.accountSeat) : null,
     ...o.fields,
   };
 }
@@ -172,23 +260,41 @@ function seatsOf(o: BookingOptions, fields: ReturnType<typeof bookingFields>) {
   const seat = o.seat === undefined ? 1 : o.seat;
   const accountSeat = o.accountSeat === undefined ? 1 : o.accountSeat;
   const seats: [string, string][] = [];
-  if (seat !== null) seats.push(['phoneLimits', `${fields.phone}_${seat}`]);
+  if (seat !== null && fields.phone) seats.push(['phoneLimits', `${fields.phone}_${seat}`]);
   if (accountSeat !== null && fields.customerUid) {
     seats.push(['userLimits', `${fields.customerUid}_${accountSeat}`]);
   }
   return seats;
 }
 
-/** Writes a booking the way the site does: booking + slots + seats in one atomic write. */
-function book(db: Firestore, o: BookingOptions = {}) {
-  const fields = bookingFields(o);
-  const code = o.code ?? 'ABC234';
-  const slots = o.slots ?? slotsNeeded(fields.startTime, fields.durationMinutes);
+/** A walk-in: no customer, phone or seats. */
+const walkIn = (o: BookingOptions = {}): BookingOptions => ({
+  customer: null,
+  phone: null,
+  seat: null,
+  accountSeat: null,
+  ...o,
+});
 
+/** Books the way the site does: booking + the barber's day doc + seats in one atomic write. */
+async function book(db: Firestore, o: BookingOptions = {}) {
+  const fields = bookingFields(o);
+  const code = fields.bookingCode;
   const batch = writeBatch(db);
   batch.set(doc(db, 'bookings', code), fields);
-  for (const time of slots) {
-    batch.set(doc(db, 'slots', slotId(fields.date, time)), { bookingId: code, date: fields.date });
+  if (o.day !== null) {
+    const maps = await dayMaps(db, fields.barberId, fields.date);
+    for (const t of o.slots ?? slotsNeeded(fields.startTime, fields.durationMinutes)) {
+      maps.booked[slotKey(t)] = code;
+    }
+    batch.set(dayRef(db, fields.barberId, fields.date), {
+      barberId: fields.barberId,
+      date: fields.date,
+      ...maps,
+      lastBookingId: code,
+      bookingAt: serverTimestamp(),
+      ...o.day,
+    });
   }
   for (const [col, id] of seatsOf(o, fields)) {
     batch.set(doc(db, col, id), { bookingId: code, startAt: fields.startAt });
@@ -197,998 +303,907 @@ function book(db: Firestore, o: BookingOptions = {}) {
 }
 
 /** Puts a booking (with its slots and seats) in the database, bypassing the rules. */
-async function seed(o: BookingOptions & { status?: string } = {}) {
-  await env.withSecurityRulesDisabled(async (ctx) => {
-    const db = ctx.firestore() as unknown as Firestore;
-    const fields = bookingFields(o);
+function seedBooking(o: BookingOptions & { status?: string } = {}) {
+  return seed(async (db) => {
+    const fields = { ...bookingFields(o), createdAt: Timestamp.now() };
     if (o.status) fields.status = o.status;
-    const code = o.code ?? 'ABC234';
-    await setDoc(doc(db, 'bookings', code), { ...fields, createdAt: Timestamp.now() });
-    for (const time of slotsNeeded(fields.startTime, fields.durationMinutes)) {
-      await setDoc(doc(db, 'slots', slotId(fields.date, time)), {
-        bookingId: code,
-        date: fields.date,
-      });
+    await setDoc(doc(db, 'bookings', fields.bookingCode), fields);
+    const maps = await dayMaps(db, fields.barberId, fields.date);
+    for (const t of slotsNeeded(fields.startTime, fields.durationMinutes)) {
+      maps.booked[slotKey(t)] = fields.bookingCode;
     }
+    await setDoc(dayRef(db, fields.barberId, fields.date), {
+      barberId: fields.barberId,
+      date: fields.date,
+      ...maps,
+      lastBookingId: fields.bookingCode,
+      bookingAt: Timestamp.now(),
+    });
     for (const [col, id] of seatsOf(o, fields)) {
-      await setDoc(doc(db, col, id), { bookingId: code, startAt: fields.startAt });
+      await setDoc(doc(db, col, id), { bookingId: fields.bookingCode, startAt: fields.startAt });
     }
+  });
+}
+
+interface SlotChange {
+  barberId?: string;
+  date?: string;
+  /** Times whose keys to remove; defaults to the default booking's (11:00, 30 min). */
+  times?: string[];
+  /** Fields to override on the day doc, or null to not write it. */
+  day?: Record<string, unknown> | null;
+}
+
+/** Writes `db`'s view of a day doc with `times` removed from `booked`. */
+async function releaseSlots(db: Firestore, batch: ReturnType<typeof writeBatch>, code: string, c: SlotChange) {
+  if (c.day === null) return;
+  const barberId = c.barberId ?? 'karim';
+  const date = c.date ?? TOMORROW;
+  const maps = await dayMaps(db, barberId, date);
+  for (const t of c.times ?? slotsNeeded('11:00', 30)) delete maps.booked[slotKey(t)];
+  batch.set(dayRef(db, barberId, date), {
+    barberId,
+    date,
+    ...maps,
+    lastBookingId: code,
+    bookingAt: serverTimestamp(),
+    ...c.day,
   });
 }
 
 /** Cancels the way the site does: status + cancelledAt, and frees its slots, in one write. */
-function cancel(
-  db: Firestore,
-  code = 'ABC234',
-  slots = slotsNeeded('11:00', 30).map((t) => slotId(TOMORROW, t)),
-  extra: Record<string, unknown> = {},
-) {
+async function cancel(db: Firestore, code = 'ABC234', c: SlotChange & { fields?: Record<string, unknown> } = {}) {
   const batch = writeBatch(db);
-  batch.update(doc(db, 'bookings', code), {
-    status: 'cancelled',
-    cancelledAt: serverTimestamp(),
-    ...extra,
-  });
-  for (const id of slots) batch.delete(doc(db, 'slots', id));
+  batch.update(doc(db, 'bookings', code), { status: 'cancelled', cancelledAt: serverTimestamp(), ...c.fields });
+  await releaseSlots(db, batch, code, c);
   return batch.commit();
 }
 
-const myBookings = (db: Firestore, uid: string) =>
-  getDocs(query(collection(db, 'bookings'), where('customerUid', '==', uid)));
+/** The owner's move: the booking to `to`, its slots out of the old day doc and into the new one. */
+async function move(
+  db: Firestore,
+  to: string,
+  o: { code?: string; from?: string; date?: string; times?: string[]; fields?: Record<string, unknown>; release?: boolean; claim?: boolean } = {},
+) {
+  const code = o.code ?? 'ABC234';
+  const date = o.date ?? TOMORROW;
+  const times = o.times ?? slotsNeeded('11:00', 30);
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'bookings', code), {
+    barberId: to,
+    barberName: BARBERS[to as keyof typeof BARBERS]?.name ?? to,
+    movedAt: serverTimestamp(),
+    ...o.fields,
+  });
+  if (o.release !== false) await releaseSlots(db, batch, code, { barberId: o.from ?? 'karim', date, times });
+  if (o.claim !== false) {
+    const maps = await dayMaps(db, to, date);
+    for (const t of times) maps.booked[slotKey(t)] = code;
+    batch.set(dayRef(db, to, date), { barberId: to, date, ...maps, lastBookingId: code, bookingAt: serverTimestamp() });
+  }
+  return batch.commit();
+}
+
+/** Blocks (or with `unblock`, frees) `times` in a barber's day doc. */
+async function block(
+  db: Firestore,
+  barberId: string,
+  times: string[],
+  o: { date?: string; unblock?: boolean; day?: Record<string, unknown> } = {},
+) {
+  const date = o.date ?? TOMORROW;
+  const maps = await dayMaps(db, barberId, date);
+  const existing = (await getDoc(dayRef(db, barberId, date))).data();
+  for (const t of times) {
+    if (o.unblock) delete maps.blocked[slotKey(t)];
+    else maps.blocked[slotKey(t)] = true;
+  }
+  // Kept as they are: blocking only changes `blocked`.
+  const kept = existing?.lastBookingId
+    ? { lastBookingId: existing.lastBookingId, bookingAt: existing.bookingAt }
+    : {};
+  return setDoc(dayRef(db, barberId, date), { barberId, date, ...maps, ...kept, ...o.day });
+}
+
+function setStatus(db: Firestore, status: string, code = 'ABC234', extra: Record<string, unknown> = {}) {
+  return updateDoc(doc(db, 'bookings', code), { status, statusChangedAt: serverTimestamp(), ...extra });
+}
+
+const bookingsOf = (db: Firestore, field: string, value: string) =>
+  getDocs(query(collection(db, 'bookings'), where(field, '==', value)));
+
+// ---------------------------------------------------------------------------------------------
+
+describe('public reads', () => {
+  it('anyone can read the shop, branding, barbers and day docs', async () => {
+    await seedBooking();
+    await assertSucceeds(getDoc(doc(anyone(), 'settings', 'shop')));
+    await assertSucceeds(getDoc(doc(anyone(), 'settings', 'branding')));
+    await assertSucceeds(getDocs(collection(anyone(), 'barbers')));
+    await assertSucceeds(getDoc(dayRef(anyone(), 'karim', TOMORROW)));
+    await assertSucceeds(getDocs(query(collection(anyone(), 'days'), where('date', '==', TOMORROW))));
+  });
+
+  it('anyone can look a username up, but nobody can list them', async () => {
+    await assertSucceeds(getDoc(doc(anyone(), 'usernames', 'karim')));
+    await assertFails(getDocs(collection(anyone(), 'usernames')));
+    await assertFails(getDocs(collection(owner(), 'usernames')));
+  });
+});
 
 describe('reading bookings', () => {
-  it('a customer can get their own booking', async () => {
-    await seed();
+  beforeEach(() => seedBooking());
+
+  it('a customer can get and list only their own', async () => {
     await assertSucceeds(getDoc(doc(rami(), 'bookings', 'ABC234')));
-  });
-
-  it("a customer cannot get someone else's booking, even with its code", async () => {
-    await seed();
+    await assertSucceeds(bookingsOf(rami(), 'customerUid', RAMI.uid));
     await assertFails(getDoc(doc(sara(), 'bookings', 'ABC234')));
+    await assertFails(bookingsOf(sara(), 'customerUid', RAMI.uid));
+    await assertFails(getDocs(collection(rami(), 'bookings')));
   });
 
-  it('nobody signed out can get a booking by its code', async () => {
-    await seed();
+  it("a barber can get and list only his own barber's bookings", async () => {
+    await assertSucceeds(getDoc(doc(karim(), 'bookings', 'ABC234')));
+    await assertSucceeds(bookingsOf(karim(), 'barberId', 'karim'));
+    await assertFails(getDoc(doc(sami(), 'bookings', 'ABC234')));
+    await assertFails(bookingsOf(sami(), 'barberId', 'karim'));
+    await assertFails(getDocs(collection(sami(), 'bookings')));
+  });
+
+  it('the owner can read every booking', async () => {
+    await assertSucceeds(getDoc(doc(owner(), 'bookings', 'ABC234')));
+    await assertSucceeds(getDocs(collection(owner(), 'bookings')));
+  });
+
+  it('staff and customers may check that an unused code is free', async () => {
+    await assertSucceeds(getDoc(doc(rami(), 'bookings', 'ZZZ999')));
+    await assertSucceeds(getDoc(doc(sami(), 'bookings', 'ZZZ999')));
+  });
+
+  it('a deactivated login, a stranger password account and visitors read nothing', async () => {
+    await seedStaff(KARIM, { active: false });
+    await assertFails(getDoc(doc(karim(), 'bookings', 'ABC234')));
+    await assertFails(bookingsOf(karim(), 'barberId', 'karim'));
+    await assertFails(getDoc(doc(karim(), 'bookings', 'ZZZ999')));
+    await assertFails(getDoc(doc(stranger(), 'bookings', 'ABC234')));
+    await assertFails(getDoc(doc(stranger(), 'bookings', 'ZZZ999')));
     await assertFails(getDoc(doc(anyone(), 'bookings', 'ABC234')));
   });
 
-  it("nobody but Eddy can get a walk-in, or an older booking that has no customerUid", async () => {
-    await seed({ customer: null, seat: null });
-    await assertFails(getDoc(doc(rami(), 'bookings', 'ABC234')));
-    await env.withSecurityRulesDisabled(async (ctx) => {
-      const db = ctx.firestore() as unknown as Firestore;
-      const { customerUid: _uid, customerEmail: _email, ...old } = bookingFields({ code: 'OLD234' });
-      await setDoc(doc(db, 'bookings', 'OLD234'), { ...old, createdAt: Timestamp.now() });
-    });
-    await assertFails(getDoc(doc(rami(), 'bookings', 'OLD234')));
-    await assertSucceeds(getDoc(doc(admin(), 'bookings', 'OLD234')));
-  });
-
-  it('a customer can check that a code is unused', async () => {
-    await assertSucceeds(getDoc(doc(rami(), 'bookings', 'ZZZ999')));
-  });
-
-  it('a customer can list their own bookings', async () => {
-    await seed();
-    await seed({ code: 'DEF345', time: '12:00', customer: SARA, phone: OTHER_PHONE });
-    await assertSucceeds(myBookings(rami(), RAMI.uid));
-  });
-
-  it("a customer cannot list someone else's bookings", async () => {
-    await seed({ customer: SARA });
-    await assertFails(myBookings(rami(), SARA.uid));
-  });
-
-  it('a customer cannot list all bookings', async () => {
-    await seed();
-    await assertFails(getDocs(collection(rami(), 'bookings')));
-    await assertFails(getDocs(collection(anyone(), 'bookings')));
-  });
-
-  it("a customer cannot query a day's bookings", async () => {
-    await seed();
-    await assertFails(getDocs(query(collection(rami(), 'bookings'), where('date', '==', TOMORROW))));
-  });
-
-  it('an email/password user who is not Eddy cannot read bookings, even with the same UID', async () => {
-    await seed();
-    await assertFails(getDoc(doc(passwordUser(), 'bookings', 'ABC234')));
-    await assertFails(myBookings(passwordUser(), RAMI.uid));
-  });
-
-  it("Eddy can list a day's bookings", async () => {
-    await seed();
-    await assertSucceeds(getDocs(query(collection(admin(), 'bookings'), where('date', '==', TOMORROW))));
+  it("the owner's UID signed in with Google is a customer, not the owner", async () => {
+    await assertFails(getDocs(collection(ownerViaGoogle(), 'bookings')));
   });
 });
 
-describe('creating bookings', () => {
-  it('a valid booking with its slots, a phone seat and an account seat is allowed', async () => {
+describe('customer bookings', () => {
+  it('a customer can book a barber', async () => {
     await assertSucceeds(book(rami()));
   });
 
-  it('refused when not signed in', async () => {
-    await assertFails(book(anyone(), { customer: null, accountSeat: null }));
+  it('can book "Any barber" (flagged, assigned to a real barber)', async () => {
+    await assertSucceeds(book(rami(), { anyBarber: true, barberId: 'sami' }));
   });
 
-  it('refused when signed in with email/password instead of Google', async () => {
-    await assertFails(book(passwordUser()));
+  it('two barbers can be booked at the same time', async () => {
+    await assertSucceeds(book(rami(), { barberId: 'karim' }));
+    await assertSucceeds(book(sara(), { code: 'BBB333', barberId: 'sami', phone: OTHER_PHONE, customer: SARA }));
   });
 
-  it("refused with someone else's UID or email", async () => {
-    await assertFails(book(sara()));
-    await assertFails(book(rami(), { fields: { customerEmail: 'other@example.com' } }));
-    await assertFails(book(rami(), { fields: { customerUid: null } }));
+  it('the same barber can never be double-booked', async () => {
+    await book(rami());
+    await assertFails(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA }));
+    // Overlapping: 11:15 is the booking's second slot.
+    await assertFails(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA, time: '11:15', service: SERVICES.beard }));
+    await assertSucceeds(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA, time: '11:30' }));
   });
 
-  it('works for every service length', async () => {
-    await assertSucceeds(book(rami(), { service: SERVICES.beard, time: '10:00' }));
-    await assertSucceeds(
-      book(rami(), {
-        code: 'DEF345',
-        service: SERVICES.haircutBeard,
-        time: '12:00',
-        seat: 2,
-        accountSeat: 2,
-      }),
-    );
+  it('must claim exactly its own slots in the barber\'s day doc', async () => {
+    await assertFails(book(rami(), { day: null }));
+    await assertFails(book(rami(), { slots: ['11:00'] }));
+    await assertFails(book(rami(), { slots: ['11:00', '11:15', '11:30'] }));
+    await assertFails(book(rami(), { slots: ['11:00', '11:30'] }));
+    await assertFails(book(rami(), { day: { lastBookingId: 'ZZZ999' } }));
+    await assertFails(book(rami(), { day: { booked: { '1100': 'ABC234', '1115': 'ZZZ999' } } }));
   });
 
-  it('allowed on the last day the page offers', async () => {
-    await assertSucceeds(book(rami(), { date: addDays(TODAY, 3) }));
-  });
-
-  it('refused without its slot docs', async () => {
-    await assertFails(book(rami(), { slots: [] }));
-  });
-
-  it('refused when it claims only some of the slots it needs', async () => {
-    await assertFails(book(rami(), { service: SERVICES.haircutBeard, slots: ['11:00', '11:15'] }));
-  });
-
-  it('refused when the slots are for a different time', async () => {
-    await assertFails(book(rami(), { slots: ['12:00', '12:15'] }));
-  });
-
-  it('refused without taking a phone seat', async () => {
-    await assertFails(book(rami(), { seat: null }));
-  });
-
-  it('refused without taking an account seat', async () => {
-    await assertFails(book(rami(), { accountSeat: null }));
-  });
-
-  it('refused with a status other than "booked"', async () => {
-    await assertFails(book(rami(), { fields: { status: 'done' } }));
-  });
-
-  it('refused with a name too short, too long, padded or not a string', async () => {
-    await assertFails(book(rami(), { fields: { name: 'R' } }));
-    await assertFails(book(rami(), { fields: { name: 'R'.repeat(51) } }));
-    await assertFails(book(rami(), { fields: { name: ' Rami ' } }));
-    await assertFails(book(rami(), { fields: { name: 42 } }));
-  });
-
-  it('allowed with a 50-character name', async () => {
-    await assertSucceeds(book(rami(), { fields: { name: 'R'.repeat(50) } }));
-  });
-
-  it('refused with a phone that is not a Lebanese mobile number', async () => {
-    await assertFails(book(rami(), { phone: '+96172123456' }));
-    await assertFails(book(rami(), { phone: '70123456' }));
-    await assertFails(book(rami(), { phone: null, seat: null }));
-  });
-
-  it('refused with a duration or name that does not match the service', async () => {
-    await assertFails(book(rami(), { fields: { durationMinutes: 15 }, slots: ['11:00'] }));
-    await assertFails(book(rami(), { fields: { serviceName: 'Free haircut' } }));
-    await assertFails(book(rami(), { fields: { serviceId: 'massage' } }));
-  });
-
-  it('refused with an extra field', async () => {
-    await assertFails(book(rami(), { fields: { paid: true } }));
-  });
-
-  it('refused with a made-up createdAt', async () => {
-    await assertFails(book(rami(), { fields: { createdAt: Timestamp.now() } }));
-  });
-
-  it('refused off the 15-minute grid', async () => {
-    await assertFails(book(rami(), { time: '11:05', slots: ['11:05', '11:20'] }));
-  });
-
-  it('refused in the past', async () => {
-    await assertFails(book(rami(), { date: addDays(TODAY, -1) }));
-    await assertFails(book(rami(), { date: TODAY, time: '00:00' }));
-  });
-
-  it('refused beyond the booking window', async () => {
-    await assertFails(book(rami(), { date: addDays(TODAY, 4) }));
-    await assertFails(book(rami(), { date: addDays(TODAY, 30) }));
-  });
-
-  it('refused when startAt does not match the date and time', async () => {
-    const wrong = Timestamp.fromMillis(startAt(TOMORROW, '11:00').toMillis() - 5 * 3600_000);
-    await assertFails(book(rami(), { fields: { startAt: wrong } }));
-  });
-
-  it('refused when the code and document ID differ', async () => {
-    await assertFails(book(rami(), { fields: { bookingCode: 'XYZ789' } }));
-  });
-
-  it('refused to overwrite an existing booking', async () => {
-    await seed({ customer: SARA, phone: OTHER_PHONE, time: '16:00' });
-    await assertFails(book(rami(), { seat: 2, accountSeat: 2 }));
-  });
-});
-
-describe('double booking', () => {
-  it('refused for the exact same time', async () => {
-    await seed({ phone: OTHER_PHONE, customer: SARA });
-    await assertFails(book(rami(), { code: 'DEF345' }));
-  });
-
-  it('refused for an overlapping time', async () => {
-    await seed({ phone: OTHER_PHONE, customer: SARA }); // 11:00–11:30
-    await assertFails(book(rami(), { code: 'DEF345', time: '10:45' })); // 10:45–11:15
-  });
-
-  it('refused when trying to take over a slot without a new booking', async () => {
-    await seed({ phone: OTHER_PHONE, customer: SARA });
+  it("can't claim slots in another barber's day doc, or on another date", async () => {
     await assertFails(
-      setDoc(doc(rami(), 'slots', slotId(TOMORROW, '11:00')), { bookingId: 'DEF345', date: TOMORROW }),
+      book(rami(), { day: { barberId: 'sami' } }), // the ID says karim
     );
+    await assertFails(book(rami(), { day: { date: addDays(TOMORROW, 1) } }));
   });
 
-  it('refused to create a lone slot that blocks a time', async () => {
-    await assertFails(
-      setDoc(doc(rami(), 'slots', slotId(TOMORROW, '12:00')), { bookingId: 'NOPE22', date: TOMORROW }),
-    );
-  });
-
-  it('refused to add a slot to an existing booking', async () => {
-    await seed();
-    await assertFails(
-      setDoc(doc(rami(), 'slots', slotId(TOMORROW, '11:30')), { bookingId: 'ABC234', date: TOMORROW }),
-    );
-  });
-});
-
-describe('phone limit (2 upcoming bookings)', () => {
-  // Different accounts with the same phone, so only the phone limit is in play.
-  it('refuses a third upcoming booking for the same phone, on either seat', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, customer: SARA });
-    for (const seat of [1, 2] as const) {
-      await assertFails(
-        book(signedIn(NADIM), { code: 'CCC444', time: '16:00', seat, customer: NADIM }),
-      );
-    }
-  });
-
-  it('refuses inventing a third seat', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, customer: SARA });
-    const fields = bookingFields({ code: 'CCC444', time: '16:00', customer: SARA });
-    const db = sara();
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'bookings', 'CCC444'), fields);
-    for (const t of ['16:00', '16:15']) {
-      batch.set(doc(db, 'slots', slotId(TOMORROW, t)), { bookingId: 'CCC444', date: TOMORROW });
-    }
-    batch.set(doc(db, 'userLimits', `${SARA.uid}_2`), { bookingId: 'CCC444', startAt: fields.startAt });
-    batch.set(doc(db, 'phoneLimits', `${PHONE}_3`), { bookingId: 'CCC444', startAt: fields.startAt });
-    await assertFails(batch.commit());
-  });
-
-  it('allows a new booking once one is cancelled', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, status: 'cancelled' });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, customer: SARA });
-    await assertSucceeds(book(rami(), { code: 'CCC444', time: '16:00', seat: 1, accountSeat: 1 }));
-  });
-
-  it('allows a new booking once an earlier appointment has started', async () => {
-    await seed({ code: 'AAA222', date: TODAY, time: '00:00', seat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, customer: SARA });
-    await assertSucceeds(book(rami(), { code: 'CCC444', time: '16:00', seat: 1, accountSeat: 1 }));
-  });
-
-  it('does not affect another phone', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, customer: SARA });
-    await assertSucceeds(
-      book(sara(), { code: 'CCC444', time: '16:00', phone: OTHER_PHONE, customer: SARA, accountSeat: 2 }),
-    );
-  });
-
-  it("refuses taking a seat of a phone that isn't the booking's", async () => {
-    const fields = bookingFields({ code: 'CCC444' });
+  it('a day doc changes only with a booking: no claiming time without one', async () => {
     const db = rami();
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'bookings', 'CCC444'), fields);
-    for (const t of ['11:00', '11:15']) {
-      batch.set(doc(db, 'slots', slotId(TOMORROW, t)), { bookingId: 'CCC444', date: TOMORROW });
-    }
-    batch.set(doc(db, 'userLimits', `${RAMI.uid}_1`), { bookingId: 'CCC444', startAt: fields.startAt });
-    batch.set(doc(db, 'phoneLimits', `${OTHER_PHONE}_1`), { bookingId: 'CCC444', startAt: fields.startAt });
-    await assertFails(batch.commit());
-  });
-
-  it('nobody but Eddy can read the seats (they hold booking codes)', async () => {
-    await seed();
-    await assertFails(getDoc(doc(anyone(), 'phoneLimits', `${PHONE}_1`)));
-    await assertFails(getDoc(doc(rami(), 'phoneLimits', `${PHONE}_1`)));
-    await assertSucceeds(getDoc(doc(admin(), 'phoneLimits', `${PHONE}_1`)));
-  });
-
-  it('seats cannot be freed by hand', async () => {
-    await seed();
-    await assertFails(deleteDoc(doc(rami(), 'phoneLimits', `${PHONE}_1`)));
-  });
-});
-
-describe('account limit (2 upcoming bookings per Google account)', () => {
-  it('refuses a third upcoming booking, even with a different phone', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, accountSeat: 2 });
-    for (const accountSeat of [1, 2] as const) {
-      await assertFails(
-        book(rami(), { code: 'CCC444', time: '16:00', phone: OTHER_PHONE, accountSeat }),
-      );
-    }
-  });
-
-  it('refuses inventing a third seat', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, accountSeat: 2 });
-    const fields = bookingFields({ code: 'CCC444', time: '16:00', phone: OTHER_PHONE });
-    const db = rami();
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'bookings', 'CCC444'), fields);
-    for (const t of ['16:00', '16:15']) {
-      batch.set(doc(db, 'slots', slotId(TOMORROW, t)), { bookingId: 'CCC444', date: TOMORROW });
-    }
-    batch.set(doc(db, 'phoneLimits', `${OTHER_PHONE}_1`), { bookingId: 'CCC444', startAt: fields.startAt });
-    batch.set(doc(db, 'userLimits', `${RAMI.uid}_3`), { bookingId: 'CCC444', startAt: fields.startAt });
-    await assertFails(batch.commit());
-  });
-
-  it("refuses taking someone else's account seat", async () => {
-    const fields = bookingFields({ code: 'CCC444' });
-    const db = rami();
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'bookings', 'CCC444'), fields);
-    for (const t of ['11:00', '11:15']) {
-      batch.set(doc(db, 'slots', slotId(TOMORROW, t)), { bookingId: 'CCC444', date: TOMORROW });
-    }
-    batch.set(doc(db, 'phoneLimits', `${PHONE}_1`), { bookingId: 'CCC444', startAt: fields.startAt });
-    batch.set(doc(db, 'userLimits', `${SARA.uid}_1`), { bookingId: 'CCC444', startAt: fields.startAt });
-    await assertFails(batch.commit());
-  });
-
-  it('allows a new booking once one is cancelled', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1, status: 'cancelled' });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, accountSeat: 2 });
-    await assertSucceeds(book(rami(), { code: 'CCC444', time: '16:00', seat: 1, accountSeat: 1 }));
-  });
-
-  it('allows a new booking once an earlier appointment has started', async () => {
-    await seed({ code: 'AAA222', date: TODAY, time: '00:00', seat: 1, accountSeat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, accountSeat: 2 });
-    await assertSucceeds(book(rami(), { code: 'CCC444', time: '16:00', seat: 1, accountSeat: 1 }));
-  });
-
-  it('does not affect another account', async () => {
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
-    await seed({ code: 'BBB333', time: '12:00', seat: 2, accountSeat: 2 });
-    await assertSucceeds(
-      book(sara(), { code: 'CCC444', time: '16:00', phone: OTHER_PHONE, customer: SARA }),
-    );
-  });
-
-  it('a customer can read only their own seats', async () => {
-    await seed();
-    await assertSucceeds(getDoc(doc(rami(), 'userLimits', `${RAMI.uid}_1`)));
-    await assertSucceeds(getDoc(doc(rami(), 'userLimits', `${RAMI.uid}_2`)));
-    await assertFails(getDoc(doc(sara(), 'userLimits', `${RAMI.uid}_1`)));
-    await assertFails(getDoc(doc(anyone(), 'userLimits', `${RAMI.uid}_1`)));
-    await assertFails(getDocs(collection(rami(), 'userLimits')));
-    await assertSucceeds(getDoc(doc(admin(), 'userLimits', `${RAMI.uid}_1`)));
-  });
-
-  it('seats cannot be freed by hand', async () => {
-    await seed();
-    await assertFails(deleteDoc(doc(rami(), 'userLimits', `${RAMI.uid}_1`)));
     await assertFails(
-      setDoc(doc(rami(), 'userLimits', `${RAMI.uid}_1`), { bookingId: 'NOPE22', startAt: Timestamp.now() }),
-    );
-  });
-});
-
-describe('cancelling', () => {
-  it('a customer can cancel their own booking and free the slots', async () => {
-    await seed();
-    await assertSucceeds(cancel(rami()));
-  });
-
-  it("a customer cannot cancel someone else's booking", async () => {
-    await seed();
-    await assertFails(cancel(sara()));
-  });
-
-  it('refused when signed out, or signed in with email/password', async () => {
-    await seed();
-    await assertFails(cancel(anyone()));
-    await assertFails(cancel(passwordUser()));
-  });
-
-  it('a customer cannot cancel a walk-in', async () => {
-    await seed({ customer: null, seat: null });
-    await assertFails(cancel(rami()));
-  });
-
-  it('refused without freeing the slots', async () => {
-    await seed();
-    await assertFails(cancel(rami(), 'ABC234', []));
-  });
-
-  it('refused when changing anything else too', async () => {
-    await seed();
-    await assertFails(cancel(rami(), undefined, undefined, { name: 'Someone else' }));
-    await assertFails(cancel(rami(), undefined, undefined, { startTime: '12:00' }));
-    await assertFails(cancel(rami(), undefined, undefined, { customerUid: SARA.uid }));
-  });
-
-  it('refused with a made-up cancelledAt', async () => {
-    await seed();
-    await assertFails(cancel(rami(), undefined, undefined, { cancelledAt: Timestamp.now() }));
-  });
-
-  it('refused once the appointment has started', async () => {
-    await seed({ date: TODAY, time: '00:00' });
-    await assertFails(cancel(rami(), 'ABC234', [slotId(TODAY, '00:00'), slotId(TODAY, '00:15')]));
-  });
-
-  it('refused for a booking that is already cancelled or done', async () => {
-    await seed({ status: 'cancelled' });
-    await assertFails(cancel(rami()));
-    await seed({ code: 'DEF345', time: '12:00', status: 'done', accountSeat: 2, seat: 2 });
-    await assertFails(cancel(rami(), 'DEF345', [slotId(TOMORROW, '12:00'), slotId(TOMORROW, '12:15')]));
-  });
-
-  it('a customer cannot mark a booking done, or edit their booking', async () => {
-    await seed();
-    await assertFails(updateDoc(doc(rami(), 'bookings', 'ABC234'), { status: 'done' }));
-    await assertFails(updateDoc(doc(rami(), 'bookings', 'ABC234'), { name: 'Hacker' }));
-    await assertFails(updateDoc(doc(rami(), 'bookings', 'ABC234'), { startTime: '12:00' }));
-  });
-
-  it("refused when freeing another booking's slot along with your own", async () => {
-    await seed();
-    await seed({ code: 'DEF345', time: '12:00', phone: OTHER_PHONE, customer: SARA });
-    await assertFails(
-      cancel(rami(), 'ABC234', [
-        slotId(TOMORROW, '11:00'),
-        slotId(TOMORROW, '11:15'),
-        slotId(TOMORROW, '12:00'),
-      ]),
-    );
-  });
-
-  it('a slot cannot be deleted on its own', async () => {
-    await seed();
-    await assertFails(deleteDoc(doc(rami(), 'slots', slotId(TOMORROW, '11:00'))));
-  });
-
-  it('nobody can delete a booking, not even Eddy', async () => {
-    await seed();
-    await assertFails(deleteDoc(doc(rami(), 'bookings', 'ABC234')));
-    await assertFails(deleteDoc(doc(admin(), 'bookings', 'ABC234')));
-  });
-});
-
-describe('customer profiles (pre-filled name and phone)', () => {
-  const profile = () => ({ name: 'Rami', phone: PHONE, updatedAt: serverTimestamp() });
-
-  it('a customer can save and read their own', async () => {
-    await assertSucceeds(setDoc(doc(rami(), 'customers', RAMI.uid), profile()));
-    await assertSucceeds(getDoc(doc(rami(), 'customers', RAMI.uid)));
-    await assertSucceeds(
-      setDoc(doc(rami(), 'customers', RAMI.uid), { ...profile(), phone: OTHER_PHONE }),
-    );
-  });
-
-  it("nobody else can read or write it, except Eddy reading", async () => {
-    await env.withSecurityRulesDisabled((ctx) =>
-      setDoc(doc(ctx.firestore() as unknown as Firestore, 'customers', RAMI.uid), {
-        name: 'Rami',
-        phone: PHONE,
-        updatedAt: Timestamp.now(),
+      setDoc(dayRef(db, 'karim', TOMORROW), {
+        barberId: 'karim',
+        date: TOMORROW,
+        booked: { '1100': 'ABC234' },
+        blocked: {},
+        lastBookingId: 'ABC234',
       }),
     );
-    await assertFails(getDoc(doc(sara(), 'customers', RAMI.uid)));
-    await assertFails(getDoc(doc(anyone(), 'customers', RAMI.uid)));
-    await assertFails(getDoc(doc(passwordUser(), 'customers', RAMI.uid)));
-    await assertFails(getDocs(collection(rami(), 'customers')));
-    await assertFails(setDoc(doc(sara(), 'customers', RAMI.uid), profile()));
-    await assertSucceeds(getDoc(doc(admin(), 'customers', RAMI.uid)));
   });
 
-  it("nobody can delete it or list everyone's, and Eddy can't change it", async () => {
-    await assertSucceeds(setDoc(doc(rami(), 'customers', RAMI.uid), profile()));
-    await assertFails(setDoc(doc(admin(), 'customers', RAMI.uid), profile()));
-    await assertFails(updateDoc(doc(admin(), 'customers', RAMI.uid), { name: 'Someone' }));
-    await assertFails(deleteDoc(doc(sara(), 'customers', RAMI.uid)));
-    await assertFails(deleteDoc(doc(admin(), 'customers', RAMI.uid)));
-    await assertFails(getDocs(collection(admin(), 'customers')));
+  it("can't change the barber's blocked time while booking", async () => {
+    await assertFails(book(rami(), { day: { blocked: { '1800': true } } }));
   });
 
-  it('an email/password account cannot save one, even under its own UID', async () => {
-    await assertFails(setDoc(doc(passwordUser(), 'customers', RAMI.uid), profile()));
+  it('must name the barber correctly, and he must be active', async () => {
+    await assertFails(book(rami(), { barberName: 'Sami' }));
+    await assertFails(book(rami(), { barberId: 'nobody', barberName: 'Nobody' }));
+    await seedBarber({ ...BARBERS.karim, active: false });
+    await assertFails(book(rami()));
   });
 
-  it('refused with a bad name, phone, timestamp or extra field', async () => {
-    const ref = () => doc(rami(), 'customers', RAMI.uid);
-    await assertFails(setDoc(ref(), { ...profile(), name: 'R' }));
-    await assertFails(setDoc(ref(), { ...profile(), phone: '70123456' }));
-    await assertFails(setDoc(ref(), { ...profile(), updatedAt: Timestamp.now() }));
-    await assertFails(setDoc(ref(), { ...profile(), email: 'x@example.com' }));
-    await assertFails(setDoc(ref(), { name: 'Rami', phone: PHONE }));
-  });
-});
+  it('refused on his day off, a shop closed day, or a weekday he doesn\'t work', async () => {
+    await seedBarber({ ...BARBERS.karim, daysOff: [TOMORROW] });
+    await assertFails(book(rami()));
+    await assertSucceeds(book(rami(), { barberId: 'sami' }));
 
-describe('slots', () => {
-  it("anyone can read a day's taken slots", async () => {
-    await seed();
-    await assertSucceeds(getDocs(query(collection(anyone(), 'slots'), where('date', '==', TOMORROW))));
-  });
-});
+    await seedBarber({ ...BARBERS.karim, weeklyHours: hoursWith(BARBERS.karim, TOMORROW, { closed: true }) });
+    await assertFails(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA }));
 
-describe('Eddy (admin)', () => {
-  /** Eddy's UID, but signed in with Google (if Google were ever linked to his account). */
-  const eddyViaGoogle = () =>
-    env
-      .authenticatedContext(ADMIN_UID, {
-        email: 'eddy@example.com',
-        firebase: { sign_in_provider: 'google.com' },
-      })
-      .firestore() as unknown as Firestore;
-
-  it("is only Eddy when signed in with email/password, not Google on the same account", async () => {
-    await seed();
-    await assertSucceeds(getDoc(doc(admin(), 'bookings', 'ABC234')));
-    await assertFails(getDoc(doc(eddyViaGoogle(), 'bookings', 'ABC234')));
-    await assertFails(
-      getDocs(query(collection(eddyViaGoogle(), 'bookings'), where('date', '==', TOMORROW))),
-    );
-    await assertFails(updateDoc(doc(eddyViaGoogle(), 'bookings', 'ABC234'), { status: 'done' }));
-    await assertFails(
-      setDoc(doc(eddyViaGoogle(), 'settings', 'shop'), {
-        ...toSettingsDoc(DEFAULT_SETTINGS),
-        updatedAt: serverTimestamp(),
-      }),
-    );
-    await assertFails(
-      setDoc(doc(eddyViaGoogle(), 'slots', slotId(TOMORROW, '12:00')), { date: TOMORROW, blocked: true }),
-    );
-    await assertFails(getDoc(doc(eddyViaGoogle(), 'phoneLimits', `${PHONE}_1`)));
+    await seedShop({ closedDays: [TOMORROW] });
+    await assertFails(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA, barberId: 'sassine' }));
   });
 
-  it('can mark a booking done or no-show, and undo it', async () => {
-    await seed();
-    const ref = () => doc(admin(), 'bookings', 'ABC234');
-    await assertSucceeds(updateDoc(ref(), { status: 'done', statusChangedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(ref(), { status: 'no-show', statusChangedAt: serverTimestamp() }));
-    await assertSucceeds(updateDoc(ref(), { status: 'booked', statusChangedAt: serverTimestamp() }));
-  });
-
-  it('a signed-in customer cannot', async () => {
-    await seed();
-    await assertFails(
-      updateDoc(doc(rami(), 'bookings', 'ABC234'), { status: 'done', statusChangedAt: serverTimestamp() }),
-    );
-  });
-
-  it('cannot move a booking (its slots would stay behind) or revive a cancelled one', async () => {
-    await seed();
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'ABC234'), { startTime: '16:00' }));
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'ABC234'), { date: addDays(TODAY, 2) }));
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'ABC234'), { durationMinutes: 60 }));
-    await seed({ code: 'DEF345', time: '16:00', status: 'cancelled', seat: 2, accountSeat: 2 });
-    await assertFails(
-      updateDoc(doc(admin(), 'bookings', 'DEF345'), { status: 'booked', statusChangedAt: serverTimestamp() }),
-    );
-  });
-
-  it('can read any booking', async () => {
-    await seed({ customer: SARA });
-    await assertSucceeds(getDoc(doc(admin(), 'bookings', 'ABC234')));
-  });
-
-  it('can cancel any booking at any time', async () => {
-    await seed({ date: TODAY, time: '00:00' });
-    await assertSucceeds(cancel(admin(), 'ABC234', [slotId(TODAY, '00:00'), slotId(TODAY, '00:15')]));
-  });
-
-  it('can delete a slot', async () => {
-    await seed();
-    await assertSucceeds(deleteDoc(doc(admin(), 'slots', slotId(TOMORROW, '11:00'))));
-  });
-
-  it('cannot take over a booked slot', async () => {
-    await seed();
-    await assertFails(
-      setDoc(doc(admin(), 'slots', slotId(TOMORROW, '11:00')), { bookingId: 'DEF345', date: TOMORROW }),
-    );
-  });
-});
-
-describe('Eddy walk-ins', () => {
-  const walkIn = (o: BookingOptions = {}) =>
-    book(admin(), { phone: null, customer: null, seat: null, ...o });
-
-  it('can be added without a phone, a customer UID or any seat', async () => {
-    await assertSucceeds(walkIn());
-  });
-
-  it('ignore the booking window', async () => {
-    await assertSucceeds(walkIn({ date: addDays(TODAY, 4) }));
-    await assertSucceeds(walkIn({ code: 'DEF345', date: addDays(TODAY, 60) }));
-  });
-
-  it('ignore the hours, closed days and days off', async () => {
-    await seedSettings({ weeklyHours: hoursWith(TOMORROW, { closed: true }) });
-    await assertSucceeds(walkIn());
-    await seedSettings({ daysOff: [addDays(TODAY, 2)] });
-    await assertSucceeds(walkIn({ code: 'DEF345', date: addDays(TODAY, 2), time: '21:00' }));
-  });
-
-  it('refused for the same or an overlapping time as a booking', async () => {
-    await seed(); // 11:00–11:30
-    await assertFails(walkIn({ code: 'DEF345' }));
-    await assertFails(walkIn({ code: 'DEF345', time: '11:15' }));
-    await assertFails(walkIn({ code: 'DEF345', time: '10:45', service: SERVICES.haircutBeard }));
-  });
-
-  it('refused for an overlapping time beyond the booking window too', async () => {
-    const far = addDays(TODAY, 30);
-    await assertSucceeds(walkIn({ date: far }));
-    await assertFails(walkIn({ code: 'DEF345', date: far, time: '11:15', service: SERVICES.beard }));
-  });
-
-  it('refused without all of their slots', async () => {
-    await assertFails(walkIn({ slots: [] }));
-    await assertFails(walkIn({ service: SERVICES.haircutBeard, slots: ['11:00', '11:15'] }));
-  });
-
-  it('refused longer than 60 minutes or off the 15-minute grid', async () => {
-    await assertFails(
-      walkIn({
-        fields: { durationMinutes: 75 },
-        slots: ['11:00', '11:15', '11:30', '11:45', '12:00'],
-      }),
-    );
-    await assertFails(walkIn({ time: '11:05', slots: ['11:05', '11:20'] }));
-  });
-
-  it('refused with a made-up createdAt or a status other than "booked"', async () => {
-    await assertFails(walkIn({ fields: { createdAt: Timestamp.now() } }));
-    await assertFails(walkIn({ fields: { status: 'done' } }));
-  });
-});
-
-describe('settings', () => {
-  const save = (db: Firestore, settings: Record<string, unknown>) =>
-    setDoc(doc(db, 'settings', 'shop'), settings);
-  const valid = (change: Partial<Settings> = {}) => ({
-    ...toSettingsDoc({ ...DEFAULT_SETTINGS, ...change }),
-    updatedAt: serverTimestamp(),
-  });
-
-  it('anyone can read them, signed in or not', async () => {
-    await assertSucceeds(getDoc(doc(anyone(), 'settings', 'shop')));
-    await assertSucceeds(getDoc(doc(rami(), 'settings', 'shop')));
-  });
-
-  it('only Eddy can write them', async () => {
-    await assertFails(save(anyone(), valid()));
-    await assertFails(save(rami(), valid()));
-    await assertFails(save(passwordUser(), valid()));
-    await assertFails(updateDoc(doc(rami(), 'settings', 'shop'), { bookingWindowDays: 60 }));
-    await assertSucceeds(save(admin(), valid({ bookingWindowDays: 7 })));
-  });
-
-  it('Eddy can save every kind of change', async () => {
-    await assertSucceeds(
-      save(
-        admin(),
-        valid({
-          weeklyHours: hoursWith(TOMORROW, {
-            start: '09:00',
-            end: '18:00',
-            breaks: [
-              { start: '12:00', end: '12:30' },
-              { start: '15:00', end: '15:15' },
-            ],
-          }).map((d, i) => (i === 6 ? { ...d, closed: true } : d)),
-          services: [{ id: 's-1', name: 'Kids cut', durationMinutes: 15 }],
-          specialPeriods: [
-            { name: 'Christmas', start: '2026-12-15', end: '2026-12-31', daysAhead: 14 },
-            { name: 'New Year', start: '2027-01-01', end: '2027-01-03', daysAhead: 7 },
-            { name: 'Eid', start: '2027-03-01', end: '2027-03-05', daysAhead: 7 },
-            { name: 'Easter', start: '2027-04-01', end: '2027-04-05', daysAhead: 7 },
-          ],
-          daysOff: ['2026-12-25', '2027-01-01'],
-        }),
-      ),
-    );
-  });
-
-  it('Eddy can save prices, the shop address and a Maps link, or leave them empty', async () => {
-    await assertSucceeds(
-      save(
-        admin(),
-        valid({
-          services: [
-            { id: 'haircut', name: 'Haircut', durationMinutes: 30, price: 10 },
-            { id: 'beard', name: 'Beard', durationMinutes: 15, price: 7.5 },
-            { id: 's-1', name: 'Kids cut', durationMinutes: 15 },
-          ],
-          shopAddress: 'Hamra Street, Beirut',
-          mapsUrl: 'https://maps.app.goo.gl/abc123',
-        }),
-      ),
-    );
-    await assertSucceeds(save(admin(), valid({ shopAddress: '', mapsUrl: '' })));
-  });
-
-  it('settings saved before the address and Maps link existed can still be saved', async () => {
-    const { shopAddress: _a, mapsUrl: _m, ...older } = valid();
-    await assertSucceeds(save(admin(), older));
-  });
-
-  it('refused with a Maps link that is not https, or a bad or too long address', async () => {
-    await assertFails(save(admin(), valid({ mapsUrl: 'javascript:alert(1)' })));
-    await assertFails(save(admin(), valid({ mapsUrl: 'http://maps.google.com/x' })));
-    await assertFails(save(admin(), valid({ mapsUrl: 'https://maps.google.com/a b' })));
-    await assertFails(save(admin(), valid({ mapsUrl: `https://x.com/${'a'.repeat(500)}` })));
-    await assertFails(save(admin(), valid({ shopAddress: 'x'.repeat(201) })));
-    await assertFails(save(admin(), { ...valid(), shopAddress: 42 }));
-    await assertFails(save(admin(), { ...valid(), mapsUrl: null }));
-  });
-
-  it('customers can book a service with a price, and bookings never store it', async () => {
-    // DEFAULT_SETTINGS (seeded before each test) gives every service a price.
-    await assertFails(book(rami(), { fields: { price: 10 } }));
-    await assertSucceeds(book(rami()));
-  });
-
-  it('nobody can delete them, not even Eddy', async () => {
-    await assertFails(deleteDoc(doc(admin(), 'settings', 'shop')));
-  });
-
-  it('refused with more than 2 breaks a day, or not 7 days', async () => {
-    const breaks = [
-      { start: '11:00', end: '11:15' },
-      { start: '12:00', end: '12:15' },
-      { start: '13:00', end: '13:15' },
-    ];
-    await assertFails(save(admin(), valid({ weeklyHours: hoursWith(TOMORROW, { breaks }) })));
-    await assertFails(save(admin(), valid({ weeklyHours: DEFAULT_SETTINGS.weeklyHours.slice(0, 6) })));
-  });
-
-  it('refused with hours off the 15-minute grid', async () => {
-    await assertFails(save(admin(), valid({ weeklyHours: hoursWith(TOMORROW, { start: '10:05' }) })));
-  });
-
-  it('refused with more than 4 special periods, or a bad one', async () => {
-    const period = { name: 'X', start: '2026-12-15', end: '2026-12-31', daysAhead: 14 };
-    await assertFails(save(admin(), valid({ specialPeriods: Array(5).fill(period) })));
-    await assertFails(save(admin(), valid({ specialPeriods: [{ ...period, daysAhead: 0 }] })));
-    await assertFails(save(admin(), valid({ specialPeriods: [{ ...period, daysAhead: 1.5 }] })));
-    await assertFails(save(admin(), valid({ specialPeriods: [{ ...period, start: 'soon' }] })));
-  });
-
-  it('refused with a booking window outside 1 to 60 whole days', async () => {
-    await assertFails(save(admin(), valid({ bookingWindowDays: 0 })));
-    await assertFails(save(admin(), valid({ bookingWindowDays: 61 })));
-    await assertFails(save(admin(), valid({ bookingWindowDays: 2.5 })));
-  });
-
-  it('refused with an extra or missing field, a made-up updatedAt, or another doc ID', async () => {
-    await assertFails(save(admin(), { ...valid(), theme: 'dark' }));
-    const { daysOff: _daysOff, ...missing } = valid();
-    await assertFails(save(admin(), missing));
-    await assertFails(save(admin(), { ...valid(), updatedAt: Timestamp.now() }));
-    await assertFails(setDoc(doc(admin(), 'settings', 'other'), valid()));
-  });
-});
-
-describe('customer bookings follow the settings', () => {
-  it('refused before opening or past closing', async () => {
+  it("must be inside the barber's hours and clear of his breaks", async () => {
     await assertFails(book(rami(), { time: '09:45' }));
-    await assertFails(book(rami(), { time: '19:45' })); // would end 20:15
-  });
-
-  it('allowed from opening, and ending exactly at closing', async () => {
-    await assertSucceeds(book(rami(), { time: '10:00' }));
-    await assertSucceeds(book(rami(), { code: 'DEF345', time: '19:30', seat: 2, accountSeat: 2 }));
-  });
-
-  it('refused in a break or running into one', async () => {
-    await assertFails(book(rami(), { time: '14:00', service: SERVICES.beard }));
-    await assertFails(book(rami(), { time: '13:45' })); // 13:45–14:15
-    await assertFails(book(rami(), { time: '14:45' })); // 14:45–15:15
-  });
-
-  it('allowed right before and right after a break', async () => {
-    await assertSucceeds(book(rami(), { time: '13:30' }));
-    await assertSucceeds(book(rami(), { code: 'DEF345', time: '15:00', seat: 2, accountSeat: 2 }));
-  });
-
-  it("checks that weekday's own hours and its second break", async () => {
-    await seedSettings({
-      weeklyHours: hoursWith(TOMORROW, {
+    await assertFails(book(rami(), { time: '19:45' })); // runs past 20:00
+    await assertFails(book(rami(), { time: '13:45' })); // runs into his 14:00 break
+    await assertFails(book(rami(), { time: '14:30', service: SERVICES.beard }));
+    await seedBarber({
+      ...BARBERS.karim,
+      weeklyHours: hoursWith(BARBERS.karim, TOMORROW, {
         start: '12:00',
-        end: '18:00',
         breaks: [
           { start: '13:00', end: '13:30' },
           { start: '16:00', end: '16:30' },
         ],
       }),
     });
-    await assertFails(book(rami(), { time: '11:00' })); // fine on other days
-    await assertFails(book(rami(), { time: '15:45' })); // into the second break
-    await assertFails(book(rami(), { time: '16:15', service: SERVICES.beard }));
-    await assertFails(book(rami(), { time: '17:45' })); // past 18:00
-    await assertSucceeds(book(rami(), { time: '14:00' })); // 14:00 is no break on this day
-    await assertSucceeds(
-      book(rami(), {
-        code: 'DEF345',
-        time: '16:30',
-        service: SERVICES.haircutBeard,
-        seat: 2,
-        accountSeat: 2,
-      }),
-    );
+    await assertFails(book(rami(), { time: '11:00' }));
+    await assertFails(book(rami(), { time: '16:00' })); // second break
+    await assertSucceeds(book(rami(), { time: '12:30' }));
   });
 
-  it('refused on a closed weekday', async () => {
-    await seedSettings({ weeklyHours: hoursWith(TOMORROW, { closed: true }) });
-    await assertFails(book(rami()));
-    await assertSucceeds(book(rami(), { date: addDays(TODAY, 2) }));
-  });
-
-  it('refused on a day off', async () => {
-    await seedSettings({ daysOff: [TOMORROW] });
-    await assertFails(book(rami()));
-    await assertSucceeds(book(rami(), { date: addDays(TODAY, 2) }));
-  });
-
-  it("refused when the service isn't in the settings anymore", async () => {
-    await seedSettings({ services: DEFAULT_SETTINGS.services.filter((s) => s.id !== 'haircut') });
-    await assertFails(book(rami()));
-  });
-
-  it("refused when the duration or name don't match the service's current ones", async () => {
-    await seedSettings({
-      services: [
-        { id: 'haircut', name: 'Haircut', durationMinutes: 45 },
-        { id: 'beard', name: 'Beard trim', durationMinutes: 15 },
-      ],
+  it("must also be inside the shop's opening hours, even if his reach further", async () => {
+    // The owner narrowed the shop's hours after the barber's were saved.
+    await seedShop({
+      openingHours: SHOP.openingHours.map((d, i) => (i === weekdayIndex(TOMORROW) ? { ...d, start: '12:00' } : d)),
     });
-    await assertFails(book(rami())); // still 30 min
-    await assertFails(book(rami(), { service: SERVICES.beard })); // still called "Beard"
-    await assertSucceeds(
-      book(rami(), { service: { id: 'haircut', name: 'Haircut', durationMinutes: 45 } }),
-    );
+    await assertFails(book(rami(), { time: '11:00' }));
+    await assertSucceeds(book(rami(), { time: '12:00' }));
   });
 
-  it('allowed for a new 60-minute service, even taking both second seats', async () => {
-    const color = { id: 's-color', name: 'Color', durationMinutes: 60 };
-    await seedSettings({ services: [...DEFAULT_SETTINGS.services, color] });
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
-    // The most document reads a customer booking does: settings, 4 slots, 2 + 2 seats.
-    await assertSucceeds(
-      book(rami(), { code: 'CCC444', service: color, time: '16:00', seat: 2, accountSeat: 2 }),
-    );
-  });
-
-  it('refused for a service longer than 60 minutes, even if the settings have one', async () => {
-    const long = { id: 's-long', name: 'Long', durationMinutes: 75 };
-    await seedSettings({ services: [long] });
-    await assertFails(
-      book(rami(), { service: long, slots: ['11:00', '11:15', '11:30', '11:45', '12:00'] }),
-    );
-  });
-
-  it('refused while there are no settings', async () => {
-    await env.withSecurityRulesDisabled((ctx) =>
-      deleteDoc(doc(ctx.firestore() as unknown as Firestore, 'settings', 'shop')),
-    );
+  it("can't take blocked time, or run into it", async () => {
+    await block(karim(), 'karim', ['11:15']);
     await assertFails(book(rami()));
+    await assertFails(book(rami(), { time: '11:15', service: SERVICES.beard }));
+    await assertSucceeds(book(rami(), { time: '11:30' }));
   });
 
-  it("doesn't affect existing bookings: still cancellable after their service and day are gone", async () => {
-    await seed();
-    await seedSettings({ services: [], weeklyHours: hoursWith(TOMORROW, { closed: true }) });
-    await assertSucceeds(getDoc(doc(rami(), 'bookings', 'ABC234')));
-    await assertSucceeds(cancel(rami()));
+  it("another barber's blocked time doesn't matter", async () => {
+    await block(sami(), 'sami', ['11:00', '11:15']);
+    await assertSucceeds(book(rami()));
+  });
+
+  it('must use a current service with its current name and length', async () => {
+    await assertFails(book(rami(), { service: { id: 'gone', name: 'Gone', durationMinutes: 30 } }));
+    await assertFails(book(rami(), { service: { id: 'haircut', name: 'Haircut', durationMinutes: 15 } }));
+    await assertFails(book(rami(), { service: { id: 'haircut', name: 'Shave', durationMinutes: 30 } }));
+  });
+
+  it('must be in the future, within the booking window', async () => {
+    await assertFails(book(rami(), { date: addDays(TODAY, -1) }));
+    await assertFails(book(rami(), { date: addDays(TODAY, 4) })); // today + 3 is the last day
+    await assertSucceeds(book(rami(), { date: addDays(TODAY, 3) }));
+  });
+
+  it('a special period on today extends the window', async () => {
+    await seedShop({ specialPeriods: [{ name: 'Eid', start: TODAY, end: TODAY, daysAhead: 10 }] });
+    await assertSucceeds(book(rami(), { date: addDays(TODAY, 8) }));
+  });
+
+  it('must come from a Google sign-in with its own UID and email', async () => {
+    await assertFails(book(anyone()));
+    await assertFails(book(stranger(), { customer: { uid: 'stranger-uid', email: loginEmail('stranger') } }));
+    await assertFails(book(sara()));
+    await assertFails(book(rami(), { fields: { customerEmail: 'other@example.com' } }));
+  });
+
+  it('must have the right shape', async () => {
+    await assertFails(book(rami(), { fields: { price: 10 } }));
+    await assertFails(book(rami(), { fields: { status: 'done' } }));
+    await assertFails(book(rami(), { fields: { anyBarber: 'yes' } }));
+    await assertFails(book(rami(), { phone: '+33612345678' }));
+    await assertFails(book(rami(), { code: 'abc234' }));
+    await assertFails(book(rami(), { fields: { name: 'R' } }));
+    await assertFails(book(rami(), { fields: { startAt: startAt(TOMORROW, '12:00') } }));
   });
 });
 
-describe('booking window', () => {
-  const sarasBooking = (date: string): BookingOptions => ({
-    code: 'GHJ456',
-    date,
-    customer: SARA,
-    phone: OTHER_PHONE,
+describe('two upcoming bookings per phone and per Google account', () => {
+  it('a third booking is refused, whichever seat it tries', async () => {
+    await book(rami(), { code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
+    await book(rami(), { code: 'BBB333', time: '11:00', seat: 2, accountSeat: 2 });
+    for (const seat of [1, 2] as const) {
+      await assertFails(book(rami(), { code: 'CCC444', time: '12:00', seat, accountSeat: seat }));
+    }
   });
 
-  it('follows bookingWindowDays', async () => {
-    await seedSettings({ bookingWindowDays: 2 });
-    await assertSucceeds(book(rami(), { date: TOMORROW }));
-    await assertFails(book(sara(), sarasBooking(addDays(TODAY, 2))));
-
-    await seedSettings({ bookingWindowDays: 10 });
-    await assertSucceeds(book(sara(), sarasBooking(addDays(TODAY, 9))));
-    await assertFails(book(sara(), { ...sarasBooking(addDays(TODAY, 10)), code: 'KLM567', accountSeat: 2, seat: 2 }));
+  it('the phone limit holds across Google accounts, and across barbers', async () => {
+    await book(rami(), { code: 'AAA222', time: '10:00', seat: 1 });
+    await book(sara(), { code: 'BBB333', barberId: 'sami', seat: 2, customer: SARA });
+    await assertFails(book(customer(NADIM), { code: 'CCC444', barberId: 'sassine', seat: 1, customer: NADIM }));
+    await assertFails(book(customer(NADIM), { code: 'CCC444', barberId: 'sassine', seat: 2, customer: NADIM }));
   });
 
-  it('a special period that includes today lets customers book further ahead', async () => {
-    await seedSettings({
-      specialPeriods: [{ name: 'Holidays', start: addDays(TODAY, -3), end: TODAY, daysAhead: 10 }],
+  it("a booking must take the seats it names, and only seats 1 and 2 exist", async () => {
+    await assertFails(book(rami(), { fields: { phoneSeat: 2 } })); // takes phone seat 1
+    await assertFails(book(rami(), { fields: { accountSeat: 2 } }));
+    await assertFails(book(rami(), { seat: 3 as 1, accountSeat: 1 }));
+    await assertFails(book(rami(), { seat: null }));
+  });
+
+  it('a cancelled booking frees its seat', async () => {
+    await book(rami(), { code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
+    await book(rami(), { code: 'BBB333', time: '11:00', seat: 2, accountSeat: 2 });
+    await cancel(rami(), 'AAA222', { times: ['10:00', '10:15'] });
+    await assertSucceeds(book(rami(), { code: 'CCC444', time: '12:00', seat: 1, accountSeat: 1 }));
+  });
+});
+
+describe('cancelling', () => {
+  beforeEach(() => seedBooking());
+
+  it('a customer can cancel their own booking, freeing its slots', async () => {
+    await assertSucceeds(cancel(rami()));
+    await assertSucceeds(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA }));
+  });
+
+  it("refused without freeing the slots, or freeing someone else's too", async () => {
+    await assertFails(cancel(rami(), 'ABC234', { day: null }));
+    await assertFails(cancel(rami(), 'ABC234', { times: ['11:00'] }));
+    await seedBooking({ code: 'BBB333', time: '12:00', customer: SARA, phone: OTHER_PHONE, seat: 1, accountSeat: 1 });
+    await assertFails(cancel(rami(), 'ABC234', { times: ['11:00', '11:15', '12:00'] }));
+  });
+
+  it("can't pass off a write that only blocks time as freeing its slots", async () => {
+    // Blocking keeps the day doc's lastBookingId and bookingAt from when the booking was made.
+    const db = karim();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'bookings', 'ABC234'), { status: 'cancelled', cancelledAt: serverTimestamp() });
+    const day = (await getDoc(dayRef(db, 'karim', TOMORROW))).data()!;
+    batch.set(dayRef(db, 'karim', TOMORROW), { ...day, blocked: { '1800': true } });
+    await assertFails(batch.commit());
+  });
+
+  it("can't cancel someone else's, or after it started", async () => {
+    await assertFails(cancel(sara()));
+    await seedBooking({ code: 'BBB333', date: TODAY, time: '00:00', fields: { startAt: Timestamp.fromMillis(Date.now() - 60_000) } });
+    await assertFails(cancel(rami(), 'BBB333', { date: TODAY, times: ['00:00', '00:15'] }));
+  });
+
+  it("the barber and the owner can cancel, another barber can't", async () => {
+    await assertFails(cancel(sami()));
+    await assertSucceeds(cancel(karim()));
+    await seedBooking({ code: 'BBB333', time: '12:00', seat: 2, accountSeat: 2 });
+    await assertSucceeds(cancel(owner(), 'BBB333', { times: ['12:00', '12:15'] }));
+  });
+
+  it('a cancelled booking stays cancelled', async () => {
+    await cancel(rami());
+    await assertFails(setStatus(karim(), 'booked'));
+    await assertFails(cancel(karim(), 'ABC234', { times: [] }));
+  });
+});
+
+describe('booking status (done, no-show)', () => {
+  beforeEach(() => seedBooking());
+
+  it('the barber and the owner can mark done or no-show, and undo it', async () => {
+    await assertSucceeds(setStatus(karim(), 'done'));
+    await assertSucceeds(setStatus(karim(), 'booked'));
+    await assertSucceeds(setStatus(owner(), 'no-show'));
+  });
+
+  it("another barber, a deactivated login and customers can't", async () => {
+    await assertFails(setStatus(sami(), 'done'));
+    await assertFails(setStatus(rami(), 'done'));
+    await seedStaff(KARIM, { active: false });
+    await assertFails(setStatus(karim(), 'done'));
+  });
+
+  it('only the status changes, never the time or the customer', async () => {
+    await assertFails(setStatus(karim(), 'done', 'ABC234', { startTime: '12:00' }));
+    await assertFails(setStatus(karim(), 'done', 'ABC234', { cancelledAt: serverTimestamp() }));
+    await assertFails(setStatus(karim(), 'archived'));
+  });
+
+  it('a done booking keeps its slots, and must go back to booked before cancelling', async () => {
+    await setStatus(karim(), 'done');
+    await assertFails(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA }));
+    await assertFails(cancel(karim()));
+  });
+});
+
+describe('walk-ins (staff bookings)', () => {
+  it('a barber can add a walk-in for himself, the owner for anyone', async () => {
+    await assertSucceeds(book(karim(), walkIn()));
+    await assertSucceeds(book(owner(), walkIn({ code: 'BBB333', barberId: 'sami' })));
+    await assertSucceeds(book(owner(), walkIn({ code: 'CCC444', barberId: 'sassine', phone: PHONE })));
+  });
+
+  it("a barber can't add one for another barber", async () => {
+    await assertFails(book(karim(), walkIn({ barberId: 'sami' })));
+  });
+
+  it('may be outside the hours and window, or over blocked time, but never double-books', async () => {
+    await block(karim(), 'karim', ['11:00']);
+    await assertSucceeds(book(karim(), walkIn()));
+    await assertSucceeds(book(karim(), walkIn({ code: 'BBB333', time: '21:00', date: addDays(TODAY, 20) })));
+    await assertFails(book(karim(), walkIn({ code: 'CCC444', time: '11:15', service: SERVICES.beard })));
+  });
+
+  it('has no customer account, and refused for a deactivated login or a stranger', async () => {
+    await assertFails(book(karim(), walkIn({ customer: RAMI })));
+    await assertFails(book(karim(), walkIn({ anyBarber: true })));
+    await assertFails(book(stranger(), walkIn()));
+    await seedStaff(KARIM, { active: false });
+    await assertFails(book(karim(), walkIn()));
+  });
+});
+
+describe('blocked times', () => {
+  it('a barber can block and unblock his own time, the owner anyone\'s', async () => {
+    await assertSucceeds(block(karim(), 'karim', ['16:00', '16:15']));
+    await assertSucceeds(block(karim(), 'karim', ['16:00'], { unblock: true }));
+    await assertSucceeds(block(owner(), 'sami', ['16:00']));
+  });
+
+  it("a barber can't block another barber's time; customers and strangers can't block", async () => {
+    await assertFails(block(karim(), 'sami', ['16:00']));
+    await assertFails(block(rami(), 'karim', ['16:00']));
+    await assertFails(block(stranger(), 'karim', ['16:00']));
+    await assertFails(block(anyone(), 'karim', ['16:00']));
+  });
+
+  it('blocking never touches bookings', async () => {
+    await seedBooking();
+    await assertSucceeds(block(karim(), 'karim', ['16:00']));
+    await assertFails(block(karim(), 'karim', ['16:00'], { day: { booked: {} } }));
+    await assertFails(block(karim(), 'karim', ['16:00'], { day: { lastBookingId: 'ZZZ999' } }));
+  });
+
+  it("a new day doc made by blocking can't name a booking", async () => {
+    await assertFails(block(karim(), 'karim', ['16:00'], { day: { lastBookingId: 'ABC234' } }));
+  });
+
+  it('a deactivated login can\'t block', async () => {
+    await seedStaff(KARIM, { active: false });
+    await assertFails(block(karim(), 'karim', ['16:00']));
+  });
+
+  it('day docs must match their ID and shape', async () => {
+    await assertFails(block(karim(), 'karim', ['16:00'], { day: { date: TODAY } }));
+    await assertFails(block(karim(), 'karim', ['16:00'], { day: { note: 'dentist' } }));
+    await assertFails(setDoc(dayRef(karim(), 'karim', TOMORROW), { barberId: 'karim', date: TOMORROW, booked: {} }));
+  });
+});
+
+describe('moving a booking to another barber', () => {
+  beforeEach(() => seedBooking());
+
+  it('the owner can move it to a free barber, same time', async () => {
+    await assertSucceeds(move(owner(), 'sami'));
+    // Karim's time is free again; Sami's is taken.
+    await assertSucceeds(book(sara(), { code: 'BBB333', phone: OTHER_PHONE, customer: SARA }));
+    await assertFails(book(customer(NADIM), { code: 'CCC444', barberId: 'sami', phone: '+96171123456', customer: NADIM }));
+  });
+
+  it('never onto a barber who is taken for any part of it', async () => {
+    await seedBooking({ code: 'BBB333', barberId: 'sami', time: '11:15', service: SERVICES.beard, customer: SARA, phone: OTHER_PHONE });
+    await assertFails(move(owner(), 'sami'));
+  });
+
+  it('must free the old slots and claim all the new ones', async () => {
+    await assertFails(move(owner(), 'sami', { release: false }));
+    await assertFails(move(owner(), 'sami', { claim: false }));
+  });
+
+  it('only to an active barber, under his name, never changing the time', async () => {
+    await seedBarber({ ...BARBERS.sami, active: false });
+    await assertFails(move(owner(), 'sami'));
+    await assertFails(move(owner(), 'sassine', { fields: { barberName: 'Sami' } }));
+    await assertFails(move(owner(), 'sassine', { fields: { startTime: '12:00' } }));
+  });
+
+  it('only by the owner', async () => {
+    await assertFails(move(karim(), 'sami'));
+    await assertFails(move(sami(), 'sami'));
+    await assertFails(move(rami(), 'sami'));
+  });
+
+  it('not a cancelled or done booking', async () => {
+    await setStatus(karim(), 'done');
+    await assertFails(move(owner(), 'sami'));
+  });
+
+  it('the new barber manages it afterwards, the old one no longer', async () => {
+    await move(owner(), 'sami');
+    await assertSucceeds(setStatus(sami(), 'done'));
+    await assertFails(setStatus(karim(), 'no-show'));
+  });
+});
+
+describe('shop settings', () => {
+  const saveShop = (db: Firestore, change: Partial<ShopSettings> = {}, extra: Record<string, unknown> = {}) =>
+    setDoc(doc(db, 'settings', 'shop'), { ...toShopDoc({ ...SHOP, ...change }), updatedAt: serverTimestamp(), ...extra });
+
+  it('only the owner can save them', async () => {
+    await assertSucceeds(saveShop(owner()));
+    await assertFails(saveShop(karim()));
+    await assertFails(saveShop(rami()));
+    await assertFails(saveShop(stranger()));
+    await assertFails(saveShop(ownerViaGoogle()));
+  });
+
+  it('the shop name must be trimmed, 2 to 40 characters', async () => {
+    await assertSucceeds(saveShop(owner(), { shopName: 'Sa' }));
+    await assertSucceeds(saveShop(owner(), { shopName: 'x'.repeat(40) }));
+    await assertFails(saveShop(owner(), { shopName: 'S' }));
+    await assertFails(saveShop(owner(), { shopName: 'x'.repeat(41) }));
+    await assertFails(saveShop(owner(), {}, { shopName: ' Sassine ' }));
+  });
+
+  it('the WhatsApp number is empty or a Lebanese mobile', async () => {
+    await assertSucceeds(saveShop(owner(), { whatsapp: '' }));
+    await assertFails(saveShop(owner(), { whatsapp: '+33612345678' }));
+  });
+
+  it('opening hours: 7 days, on the grid, closing after opening', async () => {
+    const hours = (i: number, h: Partial<ShopSettings['openingHours'][number]>) =>
+      SHOP.openingHours.map((d, j) => (j === i ? { ...d, ...h } : d));
+    await assertFails(saveShop(owner(), { openingHours: hours(2, { start: '20:00', end: '10:00' }) }));
+    await assertFails(saveShop(owner(), { openingHours: hours(2, { start: '10:10' }) }));
+    await assertFails(saveShop(owner(), { openingHours: SHOP.openingHours.slice(0, 6) }));
+    await assertSucceeds(saveShop(owner(), { openingHours: hours(6, { closed: true }) }));
+  });
+
+  it('special periods are also saved as a small day map for the booking rule', async () => {
+    const period = { name: 'Eid', start: TODAY, end: addDays(TODAY, 89), daysAhead: 10 };
+    await assertSucceeds(saveShop(owner(), { specialPeriods: [period] }));
+    const huge = Object.fromEntries(Array.from({ length: 361 }, (_, i) => [String(20000 + i), 10]));
+    await assertFails(saveShop(owner(), {}, { periodDays: huge }));
+    await assertFails(saveShop(owner(), {}, { periodDays: [] }));
+  });
+
+  it('the Maps link must be https, and nothing unknown may be added', async () => {
+    await assertFails(saveShop(owner(), { mapsUrl: 'javascript:alert(1)' }));
+    await assertFails(saveShop(owner(), {}, { barberName: 'Eddy' }));
+    await assertFails(saveShop(owner(), {}, { updatedAt: Timestamp.now() }));
+  });
+});
+
+describe('branding (shop logo and colors)', () => {
+  const saveBranding = (db: Firestore, change: Record<string, unknown> = {}) =>
+    setDoc(doc(db, 'settings', 'branding'), {
+      logo: 'data:image/webp;base64,UklGRiQAAABXRUJQ',
+      colors: { ...DEFAULT_COLORS },
+      updatedAt: serverTimestamp(),
+      ...change,
     });
-    await assertSucceeds(book(rami(), { date: addDays(TODAY, 9) }));
-    await assertFails(book(sara(), sarasBooking(addDays(TODAY, 10))));
+
+  it('only the owner can change the logo and colors', async () => {
+    await assertSucceeds(saveBranding(owner()));
+    await assertFails(saveBranding(karim()));
+    await assertFails(saveBranding(rami()));
+    await assertFails(saveBranding(stranger()));
   });
 
-  it('any of the 4 special periods counts', async () => {
-    const later = { name: 'Later', start: addDays(TODAY, 20), end: addDays(TODAY, 30), daysAhead: 30 };
-    await seedSettings({
-      specialPeriods: [
-        later,
-        later,
-        later,
-        { name: 'Now', start: TODAY, end: addDays(TODAY, 2), daysAhead: 8 },
-      ],
+  it('the logo can be removed (shop name only)', async () => {
+    await assertSucceeds(saveBranding(owner(), { logo: null }));
+  });
+
+  it('a logo up to 140,000 characters is accepted, a bigger one refused', async () => {
+    const prefix = 'data:image/png;base64,';
+    await assertSucceeds(saveBranding(owner(), { logo: prefix + 'A'.repeat(140_000 - prefix.length) }));
+    await assertFails(saveBranding(owner(), { logo: prefix + 'A'.repeat(140_001 - prefix.length) }));
+  });
+
+  it('only WebP, JPEG or PNG data URLs: no SVG, no links, nothing else', async () => {
+    await assertSucceeds(saveBranding(owner(), { logo: 'data:image/jpeg;base64,/9j/4AAQ' }));
+    await assertFails(saveBranding(owner(), { logo: 'data:image/svg+xml;base64,PHN2Zz4=' }));
+    await assertFails(saveBranding(owner(), { logo: 'https://example.com/logo.png' }));
+    await assertFails(saveBranding(owner(), { logo: 'data:image/png;base64,<script>' }));
+    await assertFails(saveBranding(owner(), { logo: 42 }));
+  });
+
+  it('colors must be #RRGGBB, all three, nothing more', async () => {
+    await assertFails(saveBranding(owner(), { colors: { ...DEFAULT_COLORS, dark: 'black' } }));
+    await assertFails(saveBranding(owner(), { colors: { dark: '#000000', accent: '#000000' } }));
+    await assertFails(saveBranding(owner(), { colors: { ...DEFAULT_COLORS, extra: '#000000' } }));
+    await assertFails(saveBranding(owner(), { note: 'x' }));
+  });
+});
+
+describe('barbers', () => {
+  const saveBarber = (db: Firestore, barber: Barber, extra: Record<string, unknown> = {}) =>
+    setDoc(doc(db, 'barbers', barber.id), { ...toBarberDoc(barber), updatedAt: serverTimestamp(), ...extra });
+  const NEW = makeBarber('omar', 'Omar', 3);
+
+  it('only the owner can add a barber', async () => {
+    await assertSucceeds(saveBarber(owner(), NEW));
+    await assertFails(saveBarber(karim(), { ...NEW, id: 'omar2' }));
+    await assertFails(saveBarber(rami(), { ...NEW, id: 'omar3' }));
+  });
+
+  it('barber IDs are lower-case slugs, names 2 to 30 characters', async () => {
+    await assertFails(saveBarber(owner(), { ...NEW, id: 'Omar' }));
+    await assertFails(saveBarber(owner(), { ...NEW, id: 'om_ar' }));
+    await assertFails(saveBarber(owner(), { ...NEW, name: 'O' }));
+    await assertFails(saveBarber(owner(), { ...NEW, name: 'x'.repeat(31) }));
+  });
+
+  it('a barber can change his own hours, breaks and days off', async () => {
+    const hours = hoursWith(BARBERS.karim, TOMORROW, {
+      start: '12:00',
+      breaks: [{ start: '13:00', end: '13:30' }, { start: '17:00', end: '17:15' }],
     });
-    await assertSucceeds(book(rami(), { date: addDays(TODAY, 7) }));
+    await assertSucceeds(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: hours }));
+    await assertSucceeds(saveBarber(karim(), { ...BARBERS.karim, daysOff: [TOMORROW] }));
   });
 
-  it("a special period that hasn't started or has ended doesn't count", async () => {
-    await seedSettings({
-      specialPeriods: [
-        { name: 'Soon', start: TOMORROW, end: addDays(TODAY, 10), daysAhead: 10 },
-        { name: 'Over', start: addDays(TODAY, -10), end: addDays(TODAY, -1), daysAhead: 10 },
-      ],
+  it('but not his name, active flag or order, nor another barber\'s anything', async () => {
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, name: 'King Karim' }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, active: false }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, order: 0 }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.sami, daysOff: [TOMORROW] }));
+  });
+
+  it('the owner can change any barber, including deactivating him', async () => {
+    await assertSucceeds(saveBarber(owner(), { ...BARBERS.karim, name: 'Karim H.', order: 5 }));
+    await assertSucceeds(saveBarber(owner(), { ...BARBERS.sami, active: false }));
+  });
+
+  it("hours can't go outside the shop's opening hours, for barbers or the owner", async () => {
+    const early = hoursWith(BARBERS.karim, TOMORROW, { start: '09:00' });
+    const late = hoursWith(BARBERS.karim, TOMORROW, { end: '20:15' });
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: early }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: late }));
+    await assertFails(saveBarber(owner(), { ...BARBERS.karim, weeklyHours: early }));
+  });
+
+  it("can't work a weekday the shop is closed", async () => {
+    const day = weekdayIndex(TOMORROW);
+    await seedShop({ openingHours: SHOP.openingHours.map((d, i) => (i === day ? { ...d, closed: true } : d)) });
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, daysOff: [] , weeklyHours: hoursWith(BARBERS.karim, TOMORROW, { start: '11:00' }) }));
+    await assertSucceeds(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: hoursWith(BARBERS.karim, TOMORROW, { closed: true }) }));
+  });
+
+  it("after the shop's hours shrink, the owner can still deactivate a barber who sticks out", async () => {
+    await seedShop({ openingHours: SHOP.openingHours.map((d) => ({ ...d, end: '18:00' })) });
+    await assertSucceeds(saveBarber(owner(), { ...BARBERS.karim, active: false }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, daysOff: [TOMORROW], weeklyHours: hoursWith(BARBERS.karim, TOMORROW, { start: '11:00' }) }));
+  });
+
+  it('every day of the week is checked, not just the first', async () => {
+    const sunday = BARBERS.karim.weeklyHours.map((d, i) => (i === 6 ? { ...d, end: '21:00' } : d));
+    await assertFails(saveBarber(owner(), { ...NEW, weeklyHours: sunday }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: sunday }));
+  });
+
+  it('breaks: at most 2 a day; hours on the 15-min grid', async () => {
+    const three = hoursWith(BARBERS.karim, TOMORROW, {
+      breaks: [{ start: '11:00', end: '11:15' }, { start: '12:00', end: '12:15' }, { start: '13:00', end: '13:15' }],
     });
-    await assertFails(book(rami(), { date: addDays(TODAY, 5) }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: three }));
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, weeklyHours: hoursWith(BARBERS.karim, TOMORROW, { start: '10:05' }) }));
   });
 
-  // Firestore stops evaluating a write after 1000 expressions or 10 document reads (get,
-  // getAfter, exists); this is the most work a valid customer booking makes the rules do.
+  it('a deactivated login or a stranger can\'t change anything; barbers are never deleted', async () => {
+    await seedStaff(KARIM, { active: false });
+    await assertFails(saveBarber(karim(), { ...BARBERS.karim, daysOff: [TOMORROW] }));
+    await assertFails(saveBarber(stranger(), { ...BARBERS.karim, daysOff: [TOMORROW] }));
+    await assertFails(deleteDoc(doc(owner(), 'barbers', 'karim')));
+  });
+});
+
+describe('staff logins', () => {
+  const OMAR = { uid: 'omar-uid', username: 'omar', barberId: 'karim' };
+
+  /** The owner's "create login": staff doc + username doc in one write. */
+  function createLogin(
+    db: Firestore,
+    o: { uid?: string; username?: string; barberId?: string; role?: string; email?: string; skipUsername?: boolean } = {},
+  ) {
+    const uid = o.uid ?? OMAR.uid;
+    const username = o.username ?? OMAR.username;
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'staff', uid), {
+      username,
+      barberId: o.barberId ?? OMAR.barberId,
+      role: o.role ?? 'barber',
+      active: true,
+      createdAt: serverTimestamp(),
+    });
+    if (!o.skipUsername) {
+      batch.set(doc(db, 'usernames', username), { uid, email: o.email ?? loginEmail(username, 'x9y8') });
+    }
+    return batch.commit();
+  }
+
+  /** "New login" for Karim: old login off, new login, username moved, in one write. */
+  function newLogin(db: Firestore, o: { deactivateOld?: boolean; barberId?: string } = {}) {
+    const batch = writeBatch(db);
+    if (o.deactivateOld !== false) batch.update(doc(db, 'staff', KARIM.uid), { active: false });
+    batch.set(doc(db, 'staff', 'karim-uid-2'), {
+      username: 'karim',
+      barberId: o.barberId ?? 'karim',
+      role: 'barber',
+      active: true,
+      createdAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'usernames', 'karim'), { uid: 'karim-uid-2', email: loginEmail('karim', 'q7w2') });
+    return batch.commit();
+  }
+
+  it('the owner creates a barber login (staff doc + username together)', async () => {
+    await assertSucceeds(createLogin(owner()));
+    await assertSucceeds(getDoc(doc(staffUser(OMAR), 'staff', OMAR.uid)));
+  });
+
+  it('never a second owner', async () => {
+    await assertFails(createLogin(owner(), { role: 'owner' }));
+  });
+
+  it('the username doc must come with it, match it, and use the internal email', async () => {
+    await assertFails(createLogin(owner(), { skipUsername: true }));
+    await assertFails(createLogin(owner(), { email: 'omar@gmail.com' }));
+    await assertFails(createLogin(owner(), { email: loginEmail('karim', 'x9y8') }));
+    await assertFails(createLogin(owner(), { username: 'Omar!' }));
+    await assertFails(createLogin(owner(), { barberId: 'nobody' }));
+  });
+
+  it("a taken username can't be reused for a new login", async () => {
+    await assertFails(createLogin(owner(), { username: 'karim' }));
+  });
+
+  it('barbers, customers and strangers can\'t create logins or make themselves staff', async () => {
+    await assertFails(createLogin(karim()));
+    await assertFails(createLogin(rami()));
+    await assertFails(createLogin(stranger(), { uid: 'stranger-uid', username: 'stranger' }));
+  });
+
+  it('the owner turns a barber login off and on, nothing else', async () => {
+    await assertSucceeds(updateDoc(doc(owner(), 'staff', KARIM.uid), { active: false }));
+    await assertSucceeds(updateDoc(doc(owner(), 'staff', KARIM.uid), { active: true }));
+    await assertFails(updateDoc(doc(owner(), 'staff', KARIM.uid), { role: 'owner' }));
+    await assertFails(updateDoc(doc(owner(), 'staff', KARIM.uid), { barberId: 'sami' }));
+  });
+
+  it("the owner can't turn himself off or change his own role", async () => {
+    await assertFails(updateDoc(doc(owner(), 'staff', OWNER.uid), { active: false }));
+    await assertFails(updateDoc(doc(owner(), 'staff', OWNER.uid), { role: 'barber' }));
+  });
+
+  it("a barber can't turn logins on or off, even his own", async () => {
+    await assertFails(updateDoc(doc(karim(), 'staff', SAMI.uid), { active: false }));
+    await assertFails(updateDoc(doc(karim(), 'staff', KARIM.uid), { active: false }));
+  });
+
+  it('"New login" (forgotten password): same username, same barber, old login off', async () => {
+    await assertSucceeds(newLogin(owner()));
+    await assertFails(getDoc(doc(karim(), 'bookings', 'ZZZ999'))); // the old login is off
+    await assertSucceeds(getDoc(doc(staffUser({ uid: 'karim-uid-2', username: 'karim' }), 'bookings', 'ZZZ999')));
+  });
+
+  it('"New login" is refused unless the old login is turned off, or for another barber', async () => {
+    await assertFails(newLogin(owner(), { deactivateOld: false }));
+    await assertFails(newLogin(owner(), { barberId: 'sami' }));
+    await assertFails(newLogin(karim()));
+  });
+
+  it("an old login stays off once its username moved to a new one", async () => {
+    await newLogin(owner());
+    await assertFails(updateDoc(doc(owner(), 'staff', KARIM.uid), { active: true }));
+  });
+
+  it("the owner's own username can't be moved", async () => {
+    await assertFails(
+      setDoc(doc(owner(), 'usernames', 'sassine'), { uid: 'karim-uid', email: loginEmail('sassine') }),
+    );
+  });
+
+  it('staff docs: everyone reads their own, the owner all, others nothing', async () => {
+    await assertSucceeds(getDoc(doc(karim(), 'staff', KARIM.uid)));
+    await assertFails(getDoc(doc(karim(), 'staff', SAMI.uid)));
+    await assertFails(getDocs(collection(karim(), 'staff')));
+    await assertSucceeds(getDocs(collection(owner(), 'staff')));
+    await assertFails(getDoc(doc(rami(), 'staff', KARIM.uid)));
+  });
+
+  it("a deactivated login can still read its own staff doc (to say it's off)", async () => {
+    await seedStaff(KARIM, { active: false });
+    await assertSucceeds(getDoc(doc(karim(), 'staff', KARIM.uid)));
+  });
+});
+
+describe('seats and customer profiles', () => {
+  it("customers can't read the phone seats; the owner can", async () => {
+    await seedBooking();
+    await assertFails(getDoc(doc(rami(), 'phoneLimits', `${PHONE}_1`)));
+    await assertSucceeds(getDoc(doc(owner(), 'phoneLimits', `${PHONE}_1`)));
+    await assertFails(getDoc(doc(karim(), 'phoneLimits', `${PHONE}_1`)));
+  });
+
+  it('a customer reads only their own account seats', async () => {
+    await assertSucceeds(getDoc(doc(rami(), 'userLimits', `${RAMI.uid}_1`)));
+    await assertFails(getDoc(doc(rami(), 'userLimits', `${SARA.uid}_1`)));
+  });
+
+  it('a seat can only be taken for a booking made in the same write', async () => {
+    await seedBooking();
+    await assertFails(
+      setDoc(doc(sara(), 'userLimits', `${SARA.uid}_1`), { bookingId: 'ABC234', startAt: startAt(TOMORROW, '11:00') }),
+    );
+  });
+
+  it('customers save their own profile; the owner reads it, barbers don\'t', async () => {
+    const save = (db: Firestore, uid: string) =>
+      setDoc(doc(db, 'customers', uid), { name: 'Rami', phone: PHONE, updatedAt: serverTimestamp() });
+    await assertSucceeds(save(rami(), RAMI.uid));
+    await assertFails(save(rami(), SARA.uid));
+    await assertSucceeds(getDoc(doc(owner(), 'customers', RAMI.uid)));
+    await assertFails(getDoc(doc(karim(), 'customers', RAMI.uid)));
+    await assertFails(getDoc(doc(sara(), 'customers', RAMI.uid)));
+  });
+});
+
+describe('rules evaluation limits', () => {
+  // Measured: 44 p() (about 350 expressions) fit on top of the heaviest booking and 45 don't, so
+  // it uses roughly 650 of the 1000. 40 keeps about 30% spare: a change that adds work to
+  // customer bookings must keep these passing.
+  const SPARE_PADDING = 40;
+  // The booking reads 5 documents, so 5 more still fit in the per-write limit of 10.
+  const SPARE_READS = 5;
+
+  // Firestore stops evaluating a write after 1000 expressions, and a document write may read at
+  // most 10 documents (get, getAfter, exists); this is the most work a valid customer booking
+  // makes the rules do.
   async function heaviestBooking() {
     const date = addDays(TODAY, 5);
     const color = { id: 's-color', name: 'Color', durationMinutes: 60 };
-    const later = { name: 'Later', start: addDays(TODAY, 20), end: addDays(TODAY, 30), daysAhead: 30 };
-    await seedSettings({
-      services: [...DEFAULT_SETTINGS.services, color],
+    // On today, but too short to reach `date`: every check of each runs before the last one passes.
+    const short = { name: 'Short', start: addDays(TODAY, -3), end: addDays(TODAY, 3), daysAhead: 2 };
+    // A year of past dates (never cleaned up) and 60 upcoming: `in` costs the same either way.
+    const manyDates = Array.from({ length: 435 }, (_, i) => addDays(TODAY, -365 + i)).filter(
+      (d) => d < TODAY || d >= addDays(TODAY, 10),
+    );
+    await seedShop({
+      services: [...SHOP.services, color],
       bookingWindowDays: 1,
-      specialPeriods: [later, later, later, { name: 'Now', start: TODAY, end: TODAY, daysAhead: 10 }],
-      weeklyHours: hoursWith(date, {
+      specialPeriods: [short, short, short, { name: 'Now', start: TODAY, end: TODAY, daysAhead: 10 }],
+      closedDays: manyDates,
+    });
+    await seedBarber({
+      ...BARBERS.karim,
+      weeklyHours: hoursWith(BARBERS.karim, date, {
         breaks: [
           { start: '12:00', end: '12:30' },
           { start: '14:00', end: '15:00' },
         ],
       }),
-      // A year of past days off (never cleaned up) and 60 upcoming: `in` costs the same either way.
-      daysOff: Array.from({ length: 435 }, (_, i) => addDays(TODAY, -365 + i)).filter(
-        (d) => d < TODAY || d >= addDays(TODAY, 10),
-      ),
+      daysOff: manyDates,
     });
-    await seed({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
-    return book(rami(), { code: 'CCC444', date, service: color, time: '16:00', seat: 2, accountSeat: 2 });
+    // A busy day, and the customer's first seats in use, so the second ones are checked.
+    await seedBooking({ code: 'AAA222', time: '10:00', seat: 1, accountSeat: 1 });
+    await seedBooking({ code: 'BBB333', date, time: '10:00', customer: SARA, phone: OTHER_PHONE });
+    await block(karim(), 'karim', ['18:00', '18:15', '18:30'], { date });
+    return book(rami(), { code: 'CCC444', date, service: color, time: '16:00', seat: 2, accountSeat: 2, anyBarber: true });
   }
 
   /** firestore.rules with `extra` checked first in every customer booking, after `functions`. */
@@ -1216,11 +1231,8 @@ describe('booking window', () => {
     await assertSucceeds(heaviestBooking());
   });
 
-  // Measured: 22 p() calls fit on top of the heaviest booking and 23 don't, so it uses roughly
-  // 820 of the 1000 expressions. A change that adds work to customer bookings must keep this
-  // passing.
-  it('the heaviest valid booking leaves about 15% of the expression limit spare', async () => {
-    await withRules(rulesWithExtra(padding(18), PADDING), async () => {
+  it('the heaviest valid booking leaves about 30% of the expression limit spare', async () => {
+    await withRules(rulesWithExtra(padding(SPARE_PADDING), PADDING), async () => {
       await assertSucceeds(heaviestBooking());
     });
   });
@@ -1240,84 +1252,96 @@ ${PADDING}
     });
   });
 
-  // A batch may read 20 documents in all, which the emulator checks (10 extra here fail).
-  // Production also caps each write at 10, which the emulator doesn't check: the booking itself
-  // reads at most 9 (settings, 4 slots, 2 phone seats, 2 account seats), fixed by the rules'
-  // shape rather than by data. Adding a read to validCustomerBooking would break bookings.
+  // A batch may read 20 documents in all, which the emulator checks (12 extra here fail).
+  // Production also caps each document write at 10, which the emulator doesn't check: the booking
+  // itself reads exactly 5 (settings/shop, the barber, his day, its phone seat, its account seat),
+  // fixed by the rules' shape rather than by data. Adding more than 5 reads would break bookings.
   it('the heaviest valid booking leaves room in the batch document-read limit', async () => {
-    await withRules(rulesWithExtra(reads(8)), async () => {
+    await withRules(rulesWithExtra(reads(SPARE_READS)), async () => {
       await assertSucceeds(heaviestBooking());
     });
   });
-
-  it('a special period still respects days off', async () => {
-    const far = addDays(TODAY, 8);
-    await seedSettings({
-      specialPeriods: [{ name: 'Holidays', start: TODAY, end: TODAY, daysAhead: 10 }],
-      daysOff: [far],
-    });
-    await assertFails(book(rami(), { date: far }));
-    await assertSucceeds(book(rami(), { date: addDays(far, 1) }));
-  });
 });
 
-describe('blocked times', () => {
-  const block = (db: Firestore, date: string, time: string, data: Record<string, unknown> = {}) =>
-    setDoc(doc(db, 'slots', slotId(date, time)), { date, blocked: true, ...data });
+describe('rules evaluation limits for staff writes', () => {
+  // Same padding as above: each p() is about 8 expressions, so 25 of them are about 20% of 1000.
+  const PADDING = `
+    function p() { return 1 + 1 == 2; }
+    function g() { return ${Array(10).fill('p()').join(' && ')}; }`;
+  const SPARE = 'g() && g() && p() && p() && p() && p() && p()';
 
-  it('Eddy can block a free time', async () => {
-    await assertSucceeds(block(admin(), TOMORROW, '16:00'));
-  });
-
-  it('customers cannot book a blocked time, or one running into it', async () => {
-    await block(admin(), TOMORROW, '11:15');
-    await assertFails(book(rami())); // 11:00–11:30
-    await assertFails(book(rami(), { time: '11:15', service: SERVICES.beard }));
-    await assertSucceeds(book(rami(), { time: '11:30' }));
-  });
-
-  it("Eddy's walk-ins cannot take a blocked time either", async () => {
-    await block(admin(), TOMORROW, '11:00');
-    await assertFails(book(admin(), { phone: null, customer: null, seat: null }));
-  });
-
-  it('Eddy cannot block a booked slot (the booking keeps it)', async () => {
-    await seed();
-    await assertFails(block(admin(), TOMORROW, '11:00'));
-  });
-
-  it('customers cannot block or unblock', async () => {
-    await assertFails(block(rami(), TOMORROW, '16:00'));
-    await assertFails(block(anyone(), TOMORROW, '16:00'));
-    await block(admin(), TOMORROW, '16:00');
-    await assertFails(deleteDoc(doc(rami(), 'slots', slotId(TOMORROW, '16:00'))));
-  });
-
-  it('Eddy can unblock', async () => {
-    await block(admin(), TOMORROW, '16:00');
-    await assertSucceeds(deleteDoc(doc(admin(), 'slots', slotId(TOMORROW, '16:00'))));
-    await assertSucceeds(book(rami(), { time: '16:00' }));
-  });
-
-  it('refused with an extra field, another date than the ID, or off the grid', async () => {
-    await assertFails(block(admin(), TOMORROW, '16:00', { reason: 'dentist' }));
-    await assertFails(block(admin(), TOMORROW, '16:00', { blocked: 'yes' }));
-    await assertFails(
-      setDoc(doc(admin(), 'slots', slotId(TOMORROW, '16:00')), { date: TODAY, blocked: true }),
+  /** firestore.rules with SPARE checked first in the rule that starts with `marker`. */
+  function withSpare(marker: string, prefix: string) {
+    if (RULES.split(marker).length !== 2) throw new Error(`"${marker}" changed; update this test`);
+    return RULES.replace(marker, marker.replace(prefix, `${prefix}${SPARE} && `)).replace(
+      '    function isCustomer',
+      `${PADDING}\n    function isCustomer`,
     );
-    await assertFails(block(admin(), TOMORROW, '16:05'));
+  }
+
+  it('saving the fullest shop settings leaves about 20% spare', async () => {
+    const periods = [0, 1, 2, 3].map((i) => ({
+      name: `Period ${i}`,
+      start: addDays(TODAY, i * 100),
+      end: addDays(TODAY, i * 100 + 89),
+      daysAhead: 30,
+    }));
+    const rules = withSpare("      allow create, update: if isOwner() && (", 'if ');
+    await withRules(rules, () =>
+      assertSucceeds(
+        setDoc(doc(owner(), 'settings', 'shop'), {
+          ...toShopDoc({
+            ...SHOP,
+            specialPeriods: periods,
+            closedDays: Array.from({ length: 200 }, (_, i) => addDays(TODAY, i)),
+            shopAddress: 'x'.repeat(200),
+            mapsUrl: `https://maps.app.goo.gl/${'x'.repeat(400)}`,
+          }),
+          updatedAt: serverTimestamp(),
+        }),
+      ),
+    );
   });
 
-  it("anyone can see a day's blocked times among the taken slots", async () => {
-    await block(admin(), TOMORROW, '16:00');
-    await assertSucceeds(getDocs(query(collection(anyone(), 'slots'), where('date', '==', TOMORROW))));
+  it('adding a barber who works every day, with 2 breaks, leaves about 20% spare', async () => {
+    const busy = makeBarber('omar', 'Omar', 3);
+    busy.weeklyHours = busy.weeklyHours.map((d) => ({
+      ...d,
+      breaks: [
+        { start: '12:00', end: '12:30' },
+        { start: '14:00', end: '15:00' },
+      ],
+    }));
+    const rules = withSpare('      allow create: if isOwner() && validBarberId(barberId)', 'if ');
+    await withRules(rules, () =>
+      assertSucceeds(
+        setDoc(doc(owner(), 'barbers', 'omar'), { ...toBarberDoc(busy), updatedAt: serverTimestamp() }),
+      ),
+    );
+  });
+
+  it('a 60-minute move (both day docs and the booking) leaves about 20% spare', async () => {
+    const color = { id: 's-color', name: 'Color', durationMinutes: 60 };
+    await seedShop({ services: [...SHOP.services, color] });
+    await seedBooking({ service: color });
+    const times = slotsNeeded('11:00', 60);
+    for (const marker of [
+      "      return after.keys().hasAll(['barberId', 'date', 'booked', 'blocked'])",
+      '      allow update: if validStatusUpdate(bookingId) || validCancel(bookingId) || validMove(bookingId);',
+    ]) {
+      await withRules(withSpare(marker, marker.startsWith('      return') ? 'return ' : 'if '), async () => {
+        await assertSucceeds(move(owner(), 'sami', { times }));
+        await move(owner(), 'karim', { from: 'sami', times }); // back, for the next marker
+      });
+    }
   });
 });
 
 describe('everything else', () => {
   it('is denied', async () => {
     await assertFails(getDoc(doc(anyone(), 'anything', 'x')));
-    await assertFails(getDoc(doc(rami(), 'anything', 'x')));
-    await assertFails(setDoc(doc(admin(), 'anything', 'x'), { a: 1 }));
+    await assertFails(getDoc(doc(owner(), 'anything', 'x')));
+    await assertFails(setDoc(doc(owner(), 'anything', 'x'), { a: 1 }));
+    await assertFails(getDoc(doc(anyone(), 'slots', `${TOMORROW}_1100`)));
   });
 });

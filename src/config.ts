@@ -31,6 +31,12 @@ export const MAX_SERVICE_MINUTES = 60;
 /** Most special booking periods (firestore.rules checks only this many). */
 export const MAX_SPECIAL_PERIODS = 4;
 
+/**
+ * Longest special period, in days (start and end included). Keeps settings/shop's periodDays map
+ * small: firestore.rules accepts at most MAX_SPECIAL_PERIODS × this many days.
+ */
+export const MAX_SPECIAL_PERIOD_DAYS = 90;
+
 /** Longest booking window Eddy can set, in days (enforced by firestore.rules). */
 export const MAX_BOOKING_WINDOW_DAYS = 60;
 

@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phases 0–1 done; Phases 2–9 not started.** Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–2 done; Phases 3–9 not started.** Since Phase 2 the rules are the multi-barber ones, so today's single-barber pages no longer work against the emulator until Phases 3–4 switch them over. Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -140,7 +140,8 @@ Times inside documents the rules read are **minutes since midnight** and dates i
 | `openingHours` | list of 7 `{closed, open, close}` | Monday first, minutes. The shop's limits: every barber's hours must fit inside |
 | `services` | map id → `{name, durationMinutes, order, price?}` | same for all barbers; 15–60 min |
 | `bookingWindowDays` | int 1–60 | as today |
-| `specialPeriods` | list ≤ 4 of `{name, startDay, endDay, daysAhead}` | holiday booking windows, as today |
+| `specialPeriods` | list ≤ 4 of `{name, startDay, endDay, daysAhead}` | holiday booking windows, as today; each at most 90 days long |
+| `periodDays` | map day number → days ahead | worked out from `specialPeriods` on save (`periodDaysOf`), for every day inside a period, so the booking rule does one lookup instead of checking 4 periods |
 | `closedDays` | list of `"YYYY-MM-DD"` | whole shop closed (holidays); no barber can be booked |
 | `whatsapp` | string, `+961…` | shop's number; booking messages go here |
 | `shopAddress`, `mapsUrl` | string | as today (`mapsUrl` https only) |
@@ -193,7 +194,8 @@ settings page lists barbers whose hours now stick out and the bookings that clas
 | `barberId`, `date` | string | must match the doc ID; never change |
 | `booked` | map `"HHMM"` → bookingId | each 15-min slot a booking occupies |
 | `blocked` | map `"HHMM"` → `true` | times the barber/owner blocked |
-| `lastBookingId` | string | the booking this write is for (lets the rules find it with one `getAfter`) |
+| `lastBookingId` | string | the booking the latest change to `booked` was for (lets the rules find it with one `getAfter`) |
+| `bookingAt` | timestamp | when `booked` last changed. A cancel or move must set it to the current write's time, which proves the day doc changed together with the booking (blocking can't set it) |
 
 - Readable by everyone; it holds booking codes only, never names or phones (same as today's slots).
 - Max 96 keys per map, so a few KB at most.
@@ -213,6 +215,7 @@ Today's fields, plus:
 | `barberId` | which barber |
 | `barberName` | copied at booking time, updated on a move (My bookings, WhatsApp text, history after renames) |
 | `anyBarber` | bool: customer chose "Any barber" (shown on the dashboard) |
+| `phoneSeat`, `accountSeat` | 1 or 2: which phone and account seat the booking takes (null for walk-ins), so the rules check each seat once |
 | `movedAt` | timestamp, only on bookings the owner moved to another barber |
 
 Composite index: `barberId ASC, date ASC` (barber's calendar).
@@ -402,8 +405,8 @@ Customers never pay for `staff()`: checks are ordered so a Google sign-in short-
 ### 8.3 `days` rules
 
 - `barberId`/`date` match the doc ID and never change.
-- Every write that changes `booked` sets `lastBookingId`; the rule reads that booking with
-  `get` (before) and `getAfter` (after) and allows exactly one of:
+- Every write that changes `booked` sets `lastBookingId` and `bookingAt` (= this write's time);
+  the rule reads that booking with `get` (before) and `getAfter` (after) and allows exactly one of:
   - **Add** – the booking was created in this write, *or* moved to this barber in this write
     (`movedAt == request.time`, barber before ≠ this barber, after = this barber): `booked` gets
     **only added keys**, exactly the booking's keys (built as `[k0,k1,k2,k3][0:duration/15]`);
@@ -414,43 +417,51 @@ Customers never pay for `staff()`: checks are ordered so a Google sign-in short-
   over a booked slot is allowed but meaningless (the booking stays).
 - A **move** of a booking (on `bookings/{code}`): owner; status `booked`; only `barberId`,
   `barberName`, `movedAt` change; `barberName` matches the new barber's doc; and both day docs
-  have `lastBookingId == code` afterwards, so both of their rules (above) run and check the slots.
+  have `lastBookingId == code` and `bookingAt == now` afterwards, so both of their rules (above)
+  run and check the slots. Cancels check the same on their barber's day doc. (`lastBookingId`
+  alone isn't enough: it still names the booking from when it was made, which is how Phase 2's
+  first test run caught a cancel that didn't free its slots.)
 
 No rule ever loops over map keys; everything is a fixed number of checks.
 
 ### 8.4 Customer booking rule
 
 Today's checks (shape, Google UID/email, code format, phone, service from `settings/shop`, start
-time in the future, window/special periods, 2+2 seats), with "within hours" now checking **both**
-the shop's `openingHours` and the **barber's** hours and breaks, plus: barber `active`,
-`barberName == barber.name`, date not in shop `closedDays` nor in barber `daysOff`, and
-`getAfter(day).lastBookingId == this booking` (the day doc's own rule then checks the slots, 8.3).
+time in the future, window/special periods via `periodDays`, its named phone and account seats),
+with "within hours" now checking **both** the shop's `openingHours` and the **barber's** hours and
+breaks, plus: barber `active`, `barberName == barber.name`, date not in shop `closedDays` nor in
+barber `daysOff`, and `getAfter(day).lastBookingId == this booking` (the day doc's own rule then
+checks the slots, 8.3).
 
-### 8.5 How it stays under the limits
+### 8.5 How it stays under the limits (measured in Phase 2)
 
 **Document reads per customer booking (limit 10):**
 
-| | Today | Planned |
+| | Single-barber rules | Multi-barber rules |
 |---|---|---|
 | settings | 1 | 1 (`settings/shop`) |
 | barber schedule | – | 1 (`barbers/{id}`) |
 | slots | 4 (`slots/*`) | 1 (`days/{id}_{date}`) |
-| phone + account seats | 4 | 4 |
-| **total** | **9** | **7** |
+| phone + account seats | 4 (tries seat 1, then 2) | 2 (the booking names its seats) |
+| **total** | **9** | **5** |
 
-**Expressions (limit 1000)**: 4 slot `getAfter`s with built paths become one `getAfter` and cheap
-map lookups; the slot checks move to the day doc's own rule, which has its own budget; the shop
-hours check is 3 comparisons on a doc already read; the logo and branding are never read; values
-used twice are computed once and passed down (as now). Target: heaviest valid customer booking
-**≤ 750 expressions** and **≤ 7 reads**, enforced by the existing "heaviest booking" padding
-tests (updated), which fail if a change eats into the headroom.
+**Expressions (limit 1000)**, measured with the padding tests in `rules-tests/firestore.rules.test.ts`
+(each padding unit ≈ 8 expressions):
 
-Fallbacks if measurement comes in over target (in order): merge each owner's two seat docs into one
-(−2 reads, fewer expressions); drop the `barberName` check (copy it unverified, display only).
+| Write (worst case) | Test keeps spare |
+|---|---|
+| Customer booking (60 min, 2 breaks, 4 special periods on today, long closed-day and day-off lists, second seats): uses about 650 | ≥ 30% |
+| Shop settings (4 × 90-day periods, 200 closed days, longest address and link) | ≥ 20% |
+| Adding a barber (works every day, 2 breaks) | ≥ 20% |
+| Moving a 60-min booking (each day doc, and the booking) | ≥ 20% |
 
-Staff writes are far from the limits: a barber saving his hours costs `staff()` + `settings/shop`
-(2 reads) and ~7 × 20 expressions; a move is `staff()` + the new barber + 2 day docs + the
-booking (5 reads).
+What it took: the first draft's customer booking used about 840. Three cuts brought it to 650:
+`periodDays` (one lookup instead of 4 periods × 4 comparisons), the booking naming its seats, and
+new bookings checking only `lastBookingId`. Each simple comparison costs about 5 expressions, so
+7 days of full shape checks didn't fit in a barber or shop save either. The day checks now test
+only what bookings rely on: the 15-min grid, opening before closing, inside the shop's hours,
+at most 2 breaks. Wrong or missing fields still fail those comparisons, and the booking rule's
+`closed == false` refuses anything odd. The logo and branding are never read by bookings.
 
 ## 9. Admin scripts, backup and Eddy's migration (later, only with your go-ahead)
 
@@ -507,7 +518,7 @@ have no `slots` docs (re-created by a small rollback script if ever needed).
 | Risk | Mitigation |
 |---|---|
 | Accidentally deploying this branch to Eddy's project, or using his data | No `default` alias; `npm run deploy` disabled until Phase 7; Vite refuses non-`demo-` projects; emulator guard in `firebase.ts` |
-| Rules cost creeps over the limit as features are added | Budgeted reads (7/10) and expressions (≤750/1000), enforced by tests on every run |
+| Rules cost creeps over the limit as features are added | Measured budgets (bookings: 5/10 reads, ~650/1000 expressions; staff writes ≥ 20% spare), enforced by tests on every run |
 | Day doc contention (many bookings for one barber at once) | Firestore handles ~1 write/sec per doc; a shop's peak is far below. Transactions retry automatically |
 | "Fewest bookings" not enforced server-side | Acceptable by design (7.3) |
 | Usernames can't be renamed once used for a login in Auth | Internal email has a random suffix; username docs can be re-pointed |
@@ -547,14 +558,16 @@ size logic.
 *Test:* `npm test` – unit tests for availability with breaks/days off/closed days/blocks/shop
 hours, Any union, assignment ties, trimming.
 
-**Phase 2 – Security rules**
+**Phase 2 – Security rules** ✅
 New `firestore.rules`: staff/roles, usernames, barbers (incl. hours inside shop hours), days,
 bookings (incl. moves), settings, branding.
 *Test:* `npm run test:emu` – allow/deny tests per role (customer, barber, owner, inactive login,
 random password account): double-booking, blocked slots, cancel releases slots, moves only onto
 free slots, barber can't touch another barber, barber can't set hours outside the shop's, only the
 owner changes shop name/logo (valid/too long/too big/bad prefix/`null`), no second owner, owner
-can't demote himself, heaviest-booking cost tests (≤750 expressions, ≤7 reads).
+can't demote himself, cost tests for the heaviest customer booking (≥30% spare, 5 reads) and the
+heaviest staff writes (≥20% spare). `rules-tests/api.test.ts` (the single-barber data layer) is
+left out of the run until Phase 3 rewrites it.
 
 **Phase 3 – Data layer**
 `api.ts`: subscriptions (shop, branding, barbers, days, bookings by barber), `createBooking`

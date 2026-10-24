@@ -4,6 +4,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['rules-tests/**/*.test.ts'],
+    // The single-barber data layer's tests: src/data/api.ts is rewritten for the new rules in
+    // Phase 3 (docs/ARCHITECTURE.md), and this file with it.
+    exclude: ['rules-tests/api.test.ts'],
     environment: 'node',
     // Every test shares one emulator, so they can't run in parallel files.
     fileParallelism: false,

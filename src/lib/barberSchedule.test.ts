@@ -196,6 +196,14 @@ describe('shopErrors', () => {
     expect(shopErrors({ ...SHOP, shopName: 'x'.repeat(40) })).toEqual([]);
   });
 
+  it('limits a special period to 90 days', () => {
+    const period = (end: string) => ({ name: 'Eid', start: '2027-01-01', end, daysAhead: 10 });
+    expect(shopErrors({ ...SHOP, specialPeriods: [period('2027-03-31')] })).toEqual([]); // 90 days
+    expect(shopErrors({ ...SHOP, specialPeriods: [period('2027-04-01')] })).toEqual([
+      'Eid: a special period can be at most 90 days.',
+    ]);
+  });
+
   it('checks the WhatsApp number and the opening hours', () => {
     expect(shopErrors({ ...SHOP, whatsapp: '+9611234567' })).toEqual([
       'The WhatsApp number must be a Lebanese mobile number.',

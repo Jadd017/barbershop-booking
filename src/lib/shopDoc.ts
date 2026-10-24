@@ -24,6 +24,12 @@ export interface ShopDoc {
   services: ServicesDoc;
   bookingWindowDays: number;
   specialPeriods: SpecialPeriodDoc[];
+  /**
+   * Day number (as a string) → how many days ahead customers can book on that day, for every day
+   * inside a special period. Worked out from specialPeriods, so the booking rule needs one lookup
+   * instead of checking each period (see firestore.rules, withinWindow).
+   */
+  periodDays: Record<string, number>;
   /** "YYYY-MM-DD", sorted. */
   closedDays: string[];
   whatsapp: string;
@@ -125,6 +131,17 @@ export function periodsToDoc(periods: SpecialPeriod[]): SpecialPeriodDoc[] {
   }));
 }
 
+/** periodDays for `periods`: where periods overlap, the longest window wins. */
+export function periodDaysOf(periods: SpecialPeriod[]): Record<string, number> {
+  const days: Record<string, number> = {};
+  for (const p of periods) {
+    for (let day = dayNumber(p.start); day <= dayNumber(p.end); day++) {
+      days[day] = Math.max(days[day] ?? 0, p.daysAhead);
+    }
+  }
+  return days;
+}
+
 export function periodsFromDoc(periods: SpecialPeriodDoc[] | undefined): SpecialPeriod[] {
   return (periods ?? []).map((p) => ({
     name: p.name,
@@ -163,6 +180,7 @@ export function toShopDoc(shop: ShopSettings): ShopDoc {
     services: servicesToDoc(shop.services),
     bookingWindowDays: shop.bookingWindowDays,
     specialPeriods: periodsToDoc(shop.specialPeriods),
+    periodDays: periodDaysOf(shop.specialPeriods),
     closedDays: [...shop.closedDays].sort(),
     whatsapp: shop.whatsapp,
     shopAddress: shop.shopAddress.trim(),
