@@ -565,6 +565,27 @@ describe('staff logins (Auth emulator)', () => {
     expect((await getDoc(doc(owner().db, 'staff', KARIM.uid))).get('active')).toBe(true);
   });
 
+  it("reactivating a barber brings him and his current login back, not a replaced one", async () => {
+    await accounts.deactivateBarber(owner(), 'karim');
+    await expect(accounts.reactivateBarber(karim(), 'karim')).rejects.toThrow();
+    await accounts.reactivateBarber(owner(), 'karim');
+    expect((await getDoc(doc(owner().db, 'barbers', 'karim'))).get('active')).toBe(true);
+    expect((await getDoc(doc(owner().db, 'staff', KARIM.uid))).get('active')).toBe(true);
+    await expect(bookings.createBooking(customer(RAMI), request())).resolves.toMatchObject({ barberId: 'karim' });
+
+    // After "New login", the old login stays off.
+    const newUid = await accounts.newLogin(owner(), { username: 'karim', password: 'new-pass-1' });
+    await accounts.deactivateBarber(owner(), 'karim');
+    await accounts.reactivateBarber(owner(), 'karim');
+    expect((await getDoc(doc(owner().db, 'staff', KARIM.uid))).get('active')).toBe(false);
+    expect((await getDoc(doc(owner().db, 'staff', newUid))).get('active')).toBe(true);
+  });
+
+  it('tells whether a username is free', async () => {
+    expect(await accounts.isUsernameFree(owner(), ' Karim ')).toBe(false);
+    expect(await accounts.isUsernameFree(owner(), 'ziad')).toBe(true);
+  });
+
   it('the demo shop (npm run seed) works: customers can book it, its staff can sign in', async () => {
     const demo = await import('../scripts/demoShop');
     await demo.seedDemoShop();
@@ -573,8 +594,9 @@ describe('staff logins (Auth emulator)', () => {
       customer(c),
       request({ phone: c.phone, barberId: null, date: demo.DEMO_DAY, startTime: '10:00' }),
     );
-    // At 10:00 Tony and Karim are booked, Sami starts at 12:00 and Omar is off: only Fadi is free.
-    expect(booked.barberId).toBe('fadi');
+    // At 10:00 Tony and Karim are booked, Sami starts at 12:00 and Omar is off: Fadi and Elie
+    // are free, and Elie has fewer bookings that day (Fadi has one at 15:00).
+    expect(booked.barberId).toBe('elie');
     // The owner and 5 barbers, each acting as his own barber.
     expect(demo.LOGINS.map((l) => l.username)).toEqual(['tony', 'karim', 'sami', 'omar', 'fadi', 'elie']);
     for (const login of demo.LOGINS) {

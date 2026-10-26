@@ -10,28 +10,36 @@ import { notWorkingReason } from '../../lib/staffDay';
 import { normalizeLebanesePhone } from '../../lib/phone';
 import { toDateKey } from '../../lib/time';
 import type { Barber, DateKey, ShopSettings, TimeString } from '../../types';
+import { BarberChips } from './BarberChips';
 import { ServicePicker } from '../ServicePicker';
 import { TimeGrid } from '../TimeGrid';
 import { buttonBrass, inputBase, Notice, StepLabel } from '../ui';
 
 interface Props {
   shop: ShopSettings;
-  /** The signed-in barber: walk-ins are only ever added for him. */
-  barber: Barber;
+  /**
+   * Who the walk-in can be for: a barber's own self only, or for the owner every active barber
+   * (he picks one; there's no "Any barber" here).
+   */
+  barbers: Barber[];
+  initialBarberId: string;
   initialDate: DateKey;
   onClose: () => void;
-  /** Called with the day the booking was added to, so the dashboard can show it. */
-  onAdded: (date: DateKey) => void;
+  /** Called with the day and barber the booking was added to, so the dashboard can show it. */
+  onAdded: (date: DateKey, barberId: string) => void;
 }
 
 /**
- * Walk-ins and phone bookings, for the signed-in barber only. Offers the times he's free (his
- * hours, without breaks, blocked or booked time), live. createWalkIn claims the slots in one
- * transaction with his day, and the rules refuse a slot that's already booked, so it can't
- * double-book even if someone books the same time at that moment.
+ * Walk-ins and phone bookings: a barber adds them for himself, the owner for any barber. Offers
+ * the times that barber is free (his hours, without breaks, blocked or booked time), live.
+ * createWalkIn claims the slots in one transaction with his day, and the rules refuse a slot
+ * that's already booked, so it can't double-book even if someone books the same time at that
+ * moment.
  */
-export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }: Props) {
+export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, onClose, onAdded }: Props) {
   const [today] = useState(() => toDateKey(new Date()));
+  const [barberId, setBarberId] = useState(initialBarberId);
+  const barber = barbers.find((b) => b.id === barberId) ?? barbers[0];
   const [serviceId, setServiceId] = useState<string | null>(null);
   const [day, setDay] = useState<DateKey>(initialDate < today ? today : initialDate);
   const [time, setTime] = useState<TimeString | null>(null);
@@ -42,7 +50,8 @@ export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }:
 
   const service = shop.services.find((s) => s.id === serviceId) ?? null;
   const { startTimes, error: slotsError } = useBarberTimes(day, service, shop, [barber], barber.id);
-  const offReason = notWorkingReason(shop, barber, day);
+  const self = barbers.length === 1;
+  const offReason = notWorkingReason(shop, barber, day, self);
   // Drops the selection if someone else books it meanwhile.
   const selectedTime = startTimes?.some((o) => o.time === time && o.available) ? time : null;
 
@@ -72,7 +81,7 @@ export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }:
         startTime: selectedTime,
         barberId: barber.id,
       });
-      onAdded(day);
+      onAdded(day, barber.id);
     } catch (err) {
       if (err instanceof SlotTakenError) {
         setError('Sorry, this time was just taken, please pick another.');
@@ -96,7 +105,7 @@ export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }:
         <header className="sticky top-0 z-10 bg-charcoal text-cream">
           <div className="mx-auto flex max-w-xl items-center justify-between px-4 py-3">
             <h2 id="walk-in-title" className="caps text-2xl font-semibold tracking-[0.1em]">
-              Walk-in
+              Walk-in{self ? '' : ` · ${barber.name}`}
             </h2>
             <button
               type="button"
@@ -111,8 +120,21 @@ export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }:
         </header>
 
         <div className="mx-auto max-w-xl px-4 pb-32 pt-5">
+          {!self && (
+            <section className="mb-6">
+              <StepLabel step={1}>Barber</StepLabel>
+              <BarberChips
+                barbers={barbers}
+                selected={barber.id}
+                onSelect={(id) => {
+                  setBarberId(id);
+                  setTime(null);
+                }}
+              />
+            </section>
+          )}
           <section className="mb-6">
-            <StepLabel step={1}>Service</StepLabel>
+            <StepLabel step={self ? 1 : 2}>Service</StepLabel>
             <ServicePicker
               services={shop.services}
               selectedId={serviceId}
@@ -124,7 +146,7 @@ export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }:
           </section>
 
           <section className="mb-6">
-            <StepLabel step={2}>Day</StepLabel>
+            <StepLabel step={self ? 2 : 3}>Day</StepLabel>
             <input
               type="date"
               aria-label="Day"
@@ -142,7 +164,7 @@ export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }:
 
           {service && (
             <section className="mb-6">
-              <StepLabel step={3}>Time</StepLabel>
+              <StepLabel step={self ? 3 : 4}>Time</StepLabel>
               {slotsError ? (
                 <Notice tone="error">Couldn't load times. Check your connection.</Notice>
               ) : offReason ? (

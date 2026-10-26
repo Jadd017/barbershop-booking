@@ -23,14 +23,17 @@ export function blockedRanges(blocked: Iterable<TimeString>): TimeRange[] {
 }
 
 /**
- * Why `barber` isn't working on `date`, as a sentence for him, or null if he is: the shop is
- * closed, it's his day off, or he doesn't work that weekday.
+ * Why `barber` isn't working on `date`, as a sentence for him (or, with `self` false, about him
+ * for the owner), or null if he is: the shop is closed, it's his day off, or he doesn't work that
+ * weekday.
  */
-export function notWorkingReason(shop: ShopSettings, barber: Barber, date: DateKey): string | null {
+export function notWorkingReason(shop: ShopSettings, barber: Barber, date: DateKey, self = true): string | null {
   if (!shopHoursOn(shop, date)) return 'The shop is closed on this day.';
-  if (barber.daysOff.includes(date)) return 'This is your day off.';
+  if (barber.daysOff.includes(date)) return self ? 'This is your day off.' : `${barber.name}'s day off.`;
   const weekday = weekdayIndex(date);
-  if (barber.weeklyHours[weekday]?.closed) return `You don't work on ${WEEKDAY_NAMES[weekday]}s.`;
+  if (barber.weeklyHours[weekday]?.closed) {
+    return self ? `You don't work on ${WEEKDAY_NAMES[weekday]}s.` : `${barber.name} doesn't work on ${WEEKDAY_NAMES[weekday]}s.`;
+  }
   return null;
 }
 

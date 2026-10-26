@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phases 0–5 done; Phases 6–9 not started.** Every page uses the new data layer (the single-barber `api.ts` is gone). `/admin` is the staff dashboard; until Phase 6 the owner sees only his own barber there, and the shop-wide settings (services, opening hours, window, branding) have no page. Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–6 done; Phases 7–9 not started.** Every page uses the new data layer. `/admin` is the staff dashboard: barbers see their own day and settings, the owner every barber, the barbers pages and the shop's settings. Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -382,8 +382,8 @@ barber, window and double-booking are all still enforced.
 Used mainly after deactivating a barber: the owner's barbers page lists that barber's upcoming
 bookings, each with **Move to…** and **Cancel**. Moving keeps the same day, time and service.
 
-1. The picker shows only barbers free for the **whole duration** at that time (and warns, but
-   allows, outside the new barber's hours or over his blocked time, as walk-ins do today).
+1. The picker shows only barbers free for the **whole duration** at that time: working then
+   (his hours and the shop's, no break or day off) with none of its slots booked or blocked.
 2. One transaction: read the booking (must still be `booked`), the old barber's day doc and the
    new barber's day doc; if any needed slot is taken in the new one → "no longer free", nothing
    written. Otherwise write: booking `barberId`, `barberName`, `movedAt`; the new day doc gains the
@@ -628,13 +628,26 @@ also check a barber can't read, mark or list another barber's bookings. Checklis
 `docs/DEVELOPMENT.md`, "Staff dashboard on the emulator". `api.ts`, `useSettings`,
 `useStartTimes` and `ADMIN_UID` were removed.
 
-**Phase 6 – Owner dashboard**
+**Phase 6 – Owner dashboard** ✅
 All-barbers view and barber switcher, barbers page (add, order, hours, activate/deactivate, list
 and move or cancel a deactivated barber's bookings, WhatsApp the customer after a move), accounts
 (create login, new login, deactivate), shop settings: name, opening hours (with conflict list and
 trimming), WhatsApp, closed days, logo upload with preview and remove, colors.
 *Test:* `npm run test:emu`; manual: full owner checklist, including the forgotten-password flow
 and moving a booking.
+Done as: the owner's Today/Calendar shows every barber (phone: a switcher; wide screen: columns;
+numbers per barber and for the shop), walk-ins for any barber, **Move** on any booking (a sheet
+above the lists, `OwnerTools`, listing only barbers free for the whole booking, then "WhatsApp the
+customer"), `/admin/barbers` and `/admin/barbers/:id` (order, add barber + login, name, schedule,
+blocked times, New login, deactivate / bring back with the upcoming-bookings list), and
+`/admin/shop` with the branding editor (logo shrunk in the browser by `lib/logoImage.ts`). Move
+only offers barbers who work then and have none of the slots booked or blocked: 7.4's "warn but
+allow" outside his hours was dropped for "only if he's free for the whole duration". New in the
+data layer: `reactivateBarber` (also turns his current login back on) and `isUsernameFree`
+(checked before adding a barber, so a taken username doesn't leave a barber without a login).
+Pure logic in `lib/team.ts`. The first owner sign-in on a new shop creates settings/shop from
+`VITE_SHOP_NAME`. The seed adds a booking for Fadi to move when deactivating him. Checklist:
+`docs/DEVELOPMENT.md`, "Owner dashboard on the emulator".
 
 **Phase 7 – Per-shop build and deploy pipeline**
 `.env.eddy`, `.env.sassine`, `shops/<shop>/logo.png`, link-preview tags, `firebase.template.json`,

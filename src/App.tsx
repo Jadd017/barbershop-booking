@@ -15,6 +15,9 @@ export default function App() {
         <Route path="/manage" element={<Navigate to="/my-bookings" replace />} />
         <Route path="/admin" element={<StaffPage view="bookings" />} />
         <Route path="/admin/settings" element={<StaffPage view="settings" />} />
+        <Route path="/admin/barbers" element={<StaffPage view="barbers" />} />
+        <Route path="/admin/barbers/:barberId" element={<StaffPage view="barber" />} />
+        <Route path="/admin/shop" element={<StaffPage view="shop" />} />
       </Routes>
     </BrowserRouter>
   );

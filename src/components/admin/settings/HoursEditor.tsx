@@ -13,6 +13,8 @@ interface Props {
    * only within them, and a day the shop is closed can't be switched on.
    */
   shopHours?: OpeningHours[];
+  /** False for the shop's opening hours: breaks are each barber's. */
+  breaks?: boolean;
 }
 
 /** A first break in the middle of the day, or right after the previous one. */
@@ -23,7 +25,7 @@ function newBreak(day: DayHours) {
   return { start: minutesToTime(start), end: minutesToTime(start + 30) };
 }
 
-export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', shopHours }: Props) {
+export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', shopHours, breaks = true }: Props) {
   // A barber's own days are "Working" or not; the shop's "Open" or "Closed".
   const own = shopHours !== undefined;
 
@@ -39,9 +41,11 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
   return (
     <Section
       title={title}
-      description={`Up to ${MAX_BREAKS_PER_DAY} breaks per day.${
-        own ? " Your hours must be within the shop's opening hours." : ''
-      }`}
+      description={
+        breaks
+          ? `Up to ${MAX_BREAKS_PER_DAY} breaks per day.${own ? " Hours must be within the shop's opening hours." : ''}`
+          : "When the shop is open. Each barber's own hours and breaks fit inside these."
+      }
     >
       <ul className="grid gap-3">
         {weeklyHours.map((day, i) => {
@@ -93,7 +97,7 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
                     />
                   </div>
 
-                  {day.breaks.map((b, j) => (
+                  {breaks && day.breaks.map((b, j) => (
                     <div key={j} className="mt-2 flex items-center gap-2">
                       <span className="w-12 shrink-0 text-sm text-muted">Break</span>
                       <TimeSelect
@@ -133,7 +137,7 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
                   ))}
 
                   <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium">
-                    {day.breaks.length < MAX_BREAKS_PER_DAY && (
+                    {breaks && day.breaks.length < MAX_BREAKS_PER_DAY && (
                       <button
                         type="button"
                         onClick={() => setDay(i, { ...day, breaks: [...day.breaks, newBreak(day)] })}

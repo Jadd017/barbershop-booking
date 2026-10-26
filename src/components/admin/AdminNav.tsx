@@ -1,5 +1,6 @@
-import { CalendarDays, House, Settings, UserPlus, type LucideIcon } from 'lucide-react';
+import { CalendarDays, House, Settings, UserPlus, Users, type LucideIcon } from 'lucide-react';
 import { useNavigate } from 'react-router';
+import { useOwner } from './session';
 
 /** What /admin shows, kept in the history entry's state so the back button works. */
 export interface AdminNavState {
@@ -8,12 +9,16 @@ export interface AdminNavState {
   walkIn?: boolean;
 }
 
-export type AdminTab = 'today' | 'calendar' | 'settings';
+export type AdminTab = 'today' | 'calendar' | 'barbers' | 'settings';
 
-/** Today, Calendar, Walk-in and Settings, fixed at the bottom of Eddy's pages. */
+/**
+ * Today, Calendar, Walk-in and Settings, fixed at the bottom of the staff pages; the owner also
+ * has Barbers, and his Settings opens the shop's (his own are a tab away).
+ */
 export function AdminNav({ active }: { active: AdminTab }) {
   const navigate = useNavigate();
-  const mode = active === 'settings' ? 'today' : active;
+  const owner = useOwner() !== null;
+  const mode = active === 'today' || active === 'calendar' ? active : 'today';
 
   const items: { label: string; Icon: LucideIcon; tab?: AdminTab; go: () => void }[] = [
     {
@@ -33,15 +38,23 @@ export function AdminNav({ active }: { active: AdminTab }) {
       Icon: UserPlus,
       go: () => navigate('/admin', { state: { mode, walkIn: true } satisfies AdminNavState }),
     },
-    { label: 'Settings', Icon: Settings, tab: 'settings', go: () => navigate('/admin/settings') },
+    ...(owner
+      ? [{ label: 'Barbers', Icon: Users, tab: 'barbers' as const, go: () => navigate('/admin/barbers') }]
+      : []),
+    {
+      label: 'Settings',
+      Icon: Settings,
+      tab: 'settings',
+      go: () => navigate(owner ? '/admin/shop' : '/admin/settings'),
+    },
   ];
 
   return (
     <nav
-      aria-label="Admin"
+      aria-label="Staff"
       className="fixed inset-x-0 bottom-0 z-20 border-t border-brass/40 bg-charcoal pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="mx-auto grid max-w-xl grid-cols-4">
+      <ul className={`mx-auto grid max-w-xl ${owner ? 'grid-cols-5' : 'grid-cols-4'}`}>
         {items.map(({ label, Icon, tab, go }) => {
           const current = tab === active;
           return (

@@ -14,16 +14,18 @@ import { cardClass, removeButtonClass, Section, smallButtonClass, TimeSelect } f
 interface Props {
   today: DateKey;
   shop: ShopSettings;
-  /** The signed-in barber: only his own time is blocked. */
+  /** Whose time is blocked: the signed-in barber's own, or any barber's for the owner. */
   barber: Barber;
+  /** The signed-in barber's own ("you") rather than one the owner manages. */
+  self: boolean;
 }
 
 /**
- * Blocks a time range on one day of the barber's own, saved straight away (not part of the
- * hours draft), so customers can't book it. Only inside the shop's hours, on a day it's open.
+ * Blocks a time range on one day of a barber's, saved straight away (not part of the hours
+ * draft), so customers can't book it. Only inside the shop's hours, on a day it's open.
  * Times already booked stay with their bookings: they're listed so he can cancel them first.
  */
-export function BlockedTimes({ today, shop, barber }: Props) {
+export function BlockedTimes({ today, shop, barber, self }: Props) {
   const barberId = barber.id;
   const [date, setDate] = useState(today);
   const [start, setStart] = useState('16:00');
@@ -108,7 +110,7 @@ export function BlockedTimes({ today, shop, barber }: Props) {
   return (
     <Section
       title="Blocked times"
-      description="Block part of a day so customers can't book you then. Saved straight away."
+      description={`Block part of a day so customers can't book ${self ? 'you' : barber.name} then. Saved straight away.`}
     >
       {blocked && blocked.length > 0 && (
         <ul className="mb-3 grid gap-2">
@@ -150,7 +152,9 @@ export function BlockedTimes({ today, shop, barber }: Props) {
           {!shopHours
             ? 'The shop is closed that day.'
             : `Shop open ${shopHours.start}–${shopHours.end}. ${
-                myHours ? `You work ${myHours.start}–${myHours.end}.` : "You're not working that day."
+                myHours
+                  ? `${self ? 'You work' : `${barber.name} works`} ${myHours.start}–${myHours.end}.`
+                  : `${self ? "You're" : `${barber.name} is`} not working that day.`
               }`}
         </p>
         <div className="mt-3 flex items-center gap-2">

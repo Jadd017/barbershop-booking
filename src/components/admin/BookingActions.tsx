@@ -1,4 +1,4 @@
-import { Check, MessageCircle, Phone, Undo2, UserX, X } from 'lucide-react';
+import { ArrowRightLeft, Check, MessageCircle, Phone, Undo2, UserX, X } from 'lucide-react';
 import { useState } from 'react';
 import { setBookingStatus, staffCancelBooking } from '../../data/bookings';
 import { AlreadyCancelledError, NotCancellableError } from '../../data/errors';
@@ -6,6 +6,7 @@ import { store } from '../../data/firebase';
 import { whatsappLink } from '../../lib/whatsapp';
 import type { ShopStaffBooking } from '../../types';
 import { buttonDanger, buttonDark, buttonOutline, linkButton, Notice } from '../ui';
+import { useOwner } from './session';
 
 interface Props {
   booking: ShopStaffBooking;
@@ -13,8 +14,9 @@ interface Props {
   cancelOnly?: boolean;
 }
 
-/** Done / No-show, Call / WhatsApp / Cancel, or Undo, for one booking. */
+/** Done / No-show, Call / WhatsApp / Cancel (and Move, for the owner), or Undo, for one booking. */
 export function BookingActions({ booking, cancelOnly = false }: Props) {
+  const owner = useOwner();
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +85,17 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
                 WhatsApp
               </a>
             </>
+          )}
+          {booked && owner && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => owner.startMove(booking)}
+              className={`${linkButton} text-ink`}
+            >
+              <ArrowRightLeft aria-hidden size={16} />
+              Move
+            </button>
           )}
           {booked && (
             <button

@@ -11,7 +11,7 @@ interface Props {
 /** Where the shop is: shown on the booking page and behind "Get directions" after booking. */
 export function ShopInfoEditor({ shopAddress, mapsUrl, onChange }: Props) {
   return (
-    <Section title="Shop" description="Customers see the address, and get directions after booking.">
+    <Section title="Address" description="Customers see the address, and get directions after booking.">
       <div className={`${cardClass} grid gap-3`}>
         <label className="block">
           <span className="mb-1 block text-sm font-medium">

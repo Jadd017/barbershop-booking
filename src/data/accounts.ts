@@ -265,3 +265,26 @@ export async function changeMyPassword(user: User, current: string, next: string
   }
   await updatePassword(user, next);
 }
+
+/** True if nobody has `username` yet (any login, on or off). Checked before adding a barber. */
+export async function isUsernameFree({ db }: Store, username: string): Promise<boolean> {
+  return !(await getDoc(usernameRef(db, normalizeUsername(username)))).exists();
+}
+
+/**
+ * Owner only: brings a deactivated barber back (customers see and can book him again) and turns
+ * his current login back on, in one write. Only the login his username points at now: one
+ * replaced by "New login" stays off (the rules refuse it too).
+ */
+export async function reactivateBarber({ db }: Store, barberId: string): Promise<void> {
+  const logins = await getDocs(query(collection(db, 'staff'), where('barberId', '==', barberId)));
+  const batch = writeBatch(db);
+  batch.update(barberRef(db, barberId), { active: true, updatedAt: serverTimestamp() });
+  for (const login of logins.docs) {
+    const data = login.data() as StaffDoc;
+    if (data.active || data.role !== 'barber') continue;
+    const current = (await getDoc(usernameRef(db, data.username))).get('uid');
+    if (current === login.id) batch.update(login.ref, { active: true });
+  }
+  await batch.commit();
+}

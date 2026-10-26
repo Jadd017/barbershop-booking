@@ -58,6 +58,15 @@ describe('notWorkingReason', () => {
       "You don't work on Thursdays.",
     );
   });
+
+  it('speaks about him to the owner', () => {
+    const karim = barber('karim', 0);
+    expect(notWorkingReason(SHOP, { ...karim, daysOff: [THURSDAY] }, THURSDAY, false)).toBe("Karim's day off.");
+    const offThursdays = karim.weeklyHours.map((d, i) => (i === THU ? { ...d, closed: true } : d));
+    expect(notWorkingReason(SHOP, { ...karim, weeklyHours: offThursdays }, THURSDAY, false)).toBe(
+      "Karim doesn't work on Thursdays.",
+    );
+  });
 });
 
 describe('bookingsOutsideHours', () => {

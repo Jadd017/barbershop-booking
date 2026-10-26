@@ -66,8 +66,8 @@ With `npm run emu`, `npm run seed` and `npm run dev` running, in a phone-sized w
 ### Staff dashboard on the emulator
 
 Same setup, at http://localhost:5173/admin. Logins (all password `password1`): `tony` (owner,
-barber Tony), `karim`, `sami`, `omar`, `fadi`, `elie`. Phase 5 gives every login, the owner's
-too, his own barber's dashboard; the owner's extras come in Phase 6. Reseed to start over.
+barber Tony), `karim`, `sami`, `omar`, `fadi`, `elie`. A barber sees only his own day; the
+owner's extras are in the next checklist. Reseed to start over.
 
 1. **Login**: `karim` with a wrong password → "Wrong username or password.", then `password1`.
    The header shows the shop name and "Karim Haddad".
@@ -96,6 +96,55 @@ too, his own barber's dashboard; the owner's extras come in Phase 6. Reseed to s
 10. **Only his own**: log in as `sami`: he sees his own booking (Samir) and none of Karim's.
     `elie` on a Monday (Calendar): "You don't work on Mondays."
 
+### Owner dashboard on the emulator
+
+Log in as `tony` / `password1`. Use a phone-sized window, and a wide one (1400 px+) for step 2.
+Reseed to start over.
+
+1. **Today (phone)**: "Whole shop" stats on top, then a row of barber pills (initials, first name,
+   bookings). Tap **Karim**: his day with his own numbers, Up next, later and earlier today.
+2. **Today (wide window)**: every barber side by side, each column with his numbers and hours.
+3. **Acting on any barber**: on Karim's Up next tap **Done**, then **Undo Done**; open a later
+   booking and **Cancel** it.
+4. **Move**: open one of Karim's bookings → **Move**. Each other barber shows "Free", "Booked
+   then", "Blocked then" or "Not working then"; only free ones can be picked. Pick one → **Move
+   to …** → "Moved to …" and **WhatsApp <customer>** (for a booking with a phone), whose message
+   names the new barber. The booking now shows under that barber.
+5. **Walk-in for any barber**: Walk-in → pick **Sami** → service → only Sami's free times → add.
+   It shows in Sami's day; that time is gone for him, still free for others.
+6. **Barbers**: the list (in customer order) with each login. Move Sami **up** → the customer
+   page lists him earlier. **Add a barber**: name "Ziad Test" (username suggested "ziad"), first
+   password `ziadpass1` → "Ziad Test was added", and you're still logged in as Tony. Log in as
+   `ziad` later: he sees his own (empty) day.
+7. **A barber's page** (tap Karim): rename him (customers see the new name), change his hours,
+   breaks and days off (same warnings as his own settings), block time for him. **New login**:
+   new password `karimnew1` → "New login ready"; later `karim` / `password1` fails and
+   `karimnew1` works.
+8. **Deactivate**: open Fadi → **Deactivate Fadi** → "Yes, deactivate". "Fadi is inactive" lists
+   Nour's booking on the next open day with Move / Cancel; **Move** it to Tony (free at 15:00),
+   WhatsApp Nour. The customer page no longer shows Fadi, and `fadi` can't log in ("turned off").
+   **Bring Fadi back** → he's bookable and `fadi` / `password1` works again.
+9. **Settings → Shop**:
+   - Shop name "Tony Cuts" → Save changes: header, tab title and customer page change.
+   - WhatsApp: "12345" is refused; "71 999 888" is accepted.
+   - **Logo and colors**: upload a PNG/JPEG → preview of the customer header → Save look; the
+     customer page shows it. Make Background the same as Dark → a contrast warning; **Reset
+     colors to defaults**. **Remove logo** → Save look → name only.
+   - Services: change a price, add a service; booking window, a special period, a closed day:
+     the customer page follows. A closed day with bookings lists them at the top with Move /
+     Cancel, and saving asks "Save anyway?".
+   - Opening hours: end Monday at 18:00 → Save. Barbers working later are named, with **Trim
+     their hours to the shop's**.
+10. **Settings → Me**: Tony's own hours, days off, blocked times and password.
+11. **A barber can't reach owner pages**: log in as `karim`: 4 tabs (no Barbers), no barber
+    switcher, no Move, Settings has no Shop tab. Typing `/admin/barbers`, `/admin/barbers/sami`
+    or `/admin/shop` shows "Owner only". (The rules refuse every owner write from a barber
+    anyway: `npm run test:emu`.)
+
+Reloading a page while the emulators are busy can sit on "Loading…" for a few seconds: the
+emulator speaks HTTP/1.1, so the browser queues the new page's connections behind the old one's.
+Real Firestore uses HTTP/2 and doesn't do this.
+
 Safety (details in ARCHITECTURE.md, 3.2): `.firebaserc` has no projects (so `firebase deploy`
 says "No active project"); `npm run deploy -- <shop>` refuses without a named shop from
 `.firebaserc`; every `firebase deploy` runs `scripts/deploy-guard.mjs` first, which refuses
@@ -115,12 +164,15 @@ src/
     barberSchedule.ts  Shop and barber hours, days off and the booking window
     barberSlots.ts   Per-barber availability and "Any barber"
     staffDay.ts      The staff dashboard's day: blocked ranges, days off, clashing bookings
+    team.ts          The owner's view: per-barber numbers, move options, new barber IDs, order
+    logo.ts, logoImage.ts  Shrinking the shop's logo in the browser
     schedule.ts      Hours, breaks and validation helpers shared by the above
     slots.ts         The 15-min grid, past times
     shop.ts          Prices and the (https-only) directions link
     time.ts          Time/date helpers
   components/        Customer pages' parts; ui.tsx holds the shared look
-    admin/           Staff dashboard (Today, Calendar, Walk-in), settings, login
+    admin/           Staff dashboard (Today, Calendar, Walk-in, Move), settings, login;
+                     barbers/ (the owner's barbers pages) and shop/ (shop settings, branding)
   pages/             BookingPage, MyBookingsPage, StaffPage (/admin)
 ```
 
@@ -146,10 +198,12 @@ Google customer who opens `/admin` sees "No access".
 
 ## Staff dashboard
 
-`/admin` (`StaffPage`) shows the signed-in login's own barber, whoever it is (the owner too, until
-Phase 6 adds his all-barbers view): **Today** (stats, Up next with Done / No-show, later and
-earlier today with breaks and blocked time, Call / WhatsApp / Cancel), **Calendar** (any day) and
-**Walk-in** (his own free times only; `createWalkIn` claims the slots in a transaction).
+`/admin` (`StaffPage`) shows a barber his own day: **Today** (stats, Up next with Done /
+No-show, later and earlier today with breaks and blocked time, Call / WhatsApp / Cancel),
+**Calendar** (any day) and **Walk-in** (his own free times only; `createWalkIn` claims the slots
+in a transaction). The owner sees every barber's day (a barber switcher on a phone, columns side
+by side on a wide screen, numbers per barber and for the shop), adds walk-ins for any barber, and
+can **Move** any booking to a barber free for its whole length, then WhatsApp the customer.
 
 `/admin/settings` is his own: weekly hours with up to 2 breaks a day and days off (a draft, saved
 together; hours must stay inside the shop's opening hours, and the shop's closed weekdays can't
@@ -158,6 +212,12 @@ day) and his password. Nothing there cancels bookings: upcoming bookings outside
 listed at the top (and in the blocking form) with a Cancel button, and saving changes that
 create new clashes asks first. If the owner narrowed the shop's hours, "Fit my hours to the
 shop's" trims his.
+
+The owner also has **Barbers** (`/admin/barbers`: order, add a barber with his login, and per
+barber his name, schedule, blocked times, "New login" and deactivate / bring back, with a
+deactivated barber's upcoming bookings to move or cancel) and **Settings → Shop**
+(`/admin/shop`: name, WhatsApp, logo and colors, opening hours, services, address, booking
+window, special periods, closed days). A barber who opens those addresses gets "Owner only".
 
 The rules enforce what matters on the server: a barber reads, marks, cancels and adds bookings
 only for his own `barberId`, blocks only his own days, and changes only `weeklyHours` and

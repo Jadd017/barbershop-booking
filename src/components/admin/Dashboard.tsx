@@ -1,16 +1,16 @@
 import { ChevronDown, ChevronLeft, ChevronRight, Coffee, Lock } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { SLOT_MINUTES } from '../../config';
 import { subscribeBookingsOn } from '../../data/bookings';
-import { subscribeDay } from '../../data/days';
+import { subscribeDay, subscribeDaysOn } from '../../data/days';
 import { store } from '../../data/firebase';
 import { useNow } from '../../hooks/useNow';
 import { barberHoursOn } from '../../lib/barberSchedule';
-import { barberStartTimes } from '../../lib/barberSlots';
+import { initials } from '../../lib/initials';
 import { blockedRanges, notWorkingReason } from '../../lib/staffDay';
+import { dayCounts, totalCounts, type DayCounts } from '../../lib/team';
 import { addDays, formatDayLong, minutesToTime, timeToMinutes, toDateKey } from '../../lib/time';
-import type { BarberDay, DateKey, ShopStaffBooking } from '../../types';
+import type { Barber, BarberDay, DateKey, ShopSettings, ShopStaffBooking } from '../../types';
 import { buttonOutline, linkButton, Notice, SectionLabel, StatusChip } from '../ui';
 import { AddBookingSheet } from './AddBookingSheet';
 import { AdminHeader } from './AdminHeader';
@@ -35,13 +35,14 @@ function formatWait(minutes: number): string {
 }
 
 /**
- * The signed-in barber's day: only his own bookings, breaks and blocked time (the owner, too, sees
- * his own here). "Today" shows who's up next and the rest of the day; "Calendar" shows any day.
- * Which one, and whether the walk-in sheet is open, lives in the history state (AdminNav).
+ * A day at the shop. A barber sees only his own bookings, breaks and blocked time. The owner sees
+ * every barber: the whole shop's numbers on top, then on a phone one barber at a time (a switcher
+ * with each one's numbers), and on a wide screen all of them side by side.
+ * "Today" shows who's up next and the rest of the day; "Calendar" shows any day. Which one, and
+ * whether the walk-in sheet is open, lives in the history state (AdminNav).
  */
 export function Dashboard({ session }: { session: StaffSession }) {
-  const { shop, barber } = session;
-  const barberId = barber.id;
+  const { shop, barber: me, barbers, isOwner } = session;
   const location = useLocation();
   const navigate = useNavigate();
   const nav = (location.state ?? {}) as AdminNavState;
@@ -51,20 +52,23 @@ export function Dashboard({ session }: { session: StaffSession }) {
   const today = toDateKey(now);
   const [calendarDate, setCalendarDate] = useState<DateKey>(today);
   const date = mode === 'today' ? today : calendarDate;
+  // The owner's barber on a phone.
+  const [selectedId, setSelectedId] = useState(me.id);
 
-  // Both tagged with their date, so a previous day's list is never shown for a new day.
-  const [bookings, setBookings] = useState<{ date: DateKey; items: ShopStaffBooking[] } | null>(null);
-  const [day, setDay] = useState<BarberDay | null>(null);
+  // Tagged with what they were loaded for, so a previous day's (or login's) data is never shown.
+  const scope = `${date}|${isOwner ? '*' : me.id}`;
+  const [bookings, setBookings] = useState<{ scope: string; items: ShopStaffBooking[] } | null>(null);
+  const [days, setDays] = useState<{ scope: string; days: Map<string, BarberDay> } | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [showCancelled, setShowCancelled] = useState(false);
 
   useEffect(() => {
+    const scope = `${date}|${isOwner ? '*' : me.id}`;
     return subscribeBookingsOn(
       store,
-      barberId,
+      isOwner ? null : me.id,
       date,
       (items) => {
-        setBookings({ date, items });
+        setBookings({ scope, items });
         setLoadError(false);
       },
       (err) => {
@@ -72,60 +76,53 @@ export function Dashboard({ session }: { session: StaffSession }) {
         setLoadError(true);
       },
     );
-  }, [barberId, date]);
+  }, [isOwner, me.id, date]);
 
-  useEffect(
-    () => subscribeDay(store, barberId, date, setDay, (err) => console.error(err)),
-    [barberId, date],
+  useEffect(() => {
+    const scope = `${date}|${isOwner ? '*' : me.id}`;
+    const onError = (err: Error) => console.error(err);
+    return isOwner
+      ? subscribeDaysOn(store, date, (value) => setDays({ scope, days: value }), onError)
+      : subscribeDay(store, me.id, date, (d) => setDays({ scope, days: new Map([[me.id, d]]) }), onError);
+  }, [isOwner, me.id, date]);
+
+  const items = bookings?.scope === scope ? bookings.items : null;
+  const dayDocs = days?.scope === scope ? days.days : null;
+
+  // The owner sees every active barber, and an inactive one only on a day he still has bookings.
+  const shown = isOwner
+    ? barbers.filter((b) => b.active || items?.some((x) => x.barberId === b.id && x.status !== 'cancelled'))
+    : [me];
+  const selected = shown.find((b) => b.id === selectedId) ?? shown[0];
+  const counts = new Map(
+    shown.map((b) => [b.id, items && dayDocs ? dayCounts(shop, b, date, items, dayDocs.get(b.id), now) : null]),
   );
-
-  const items = bookings?.date === date ? bookings.items : null;
-  const thisDay = day?.date === date && day.barberId === barberId ? day : null;
-  const hours = barberHoursOn(shop, barber, date);
-  const offReason = notWorkingReason(shop, barber, date);
-
-  const active = items?.filter((b) => b.status !== 'cancelled') ?? [];
-  const cancelled = items?.filter((b) => b.status === 'cancelled') ?? [];
-  // Free 15-min slots left in his hours (not booked, blocked, in a break or past).
-  const freeSlots = thisDay
-    ? barberStartTimes(date, SLOT_MINUTES, shop, barber, thisDay, now).filter((o) => o.available).length
-    : undefined;
+  const loaded = [...counts.values()].filter((c): c is DayCounts => c !== null);
+  const header = loaded.length === shown.length ? totalCounts(loaded) : null;
+  const myHours = barberHoursOn(shop, me, date);
 
   // Minutes since midnight that count as "now" on `date` (past days are all over).
   const nowMinutes = date === today ? now.getHours() * 60 + now.getMinutes() : date < today ? 24 * 60 : -1;
 
-  const breaksAndBlocks: Entry[] = [
-    ...(hours?.breaks ?? []).map((b) => ({
-      kind: 'break' as const,
-      start: timeToMinutes(b.start),
-      end: timeToMinutes(b.end),
-    })),
-    ...blockedRanges(thisDay?.blocked ?? []).map((b) => ({
-      kind: 'blocked' as const,
-      start: timeToMinutes(b.start),
-      end: timeToMinutes(b.end),
-    })),
-  ];
-  const asEntry = (booking: ShopStaffBooking): Entry => ({
-    kind: 'booking',
-    start: timeToMinutes(booking.startTime),
-    booking,
-  });
-  const byStart = (a: Entry, b: Entry) => a.start - b.start;
-
-  // Today: the first booking not over yet is up next, the rest of the day follows.
-  const pending = active.filter((b) => b.status === 'booked' && endOf(b) > nowMinutes);
-  const upNext = mode === 'today' ? pending[0] : undefined;
-  const later = [
-    ...pending.slice(1).map(asEntry),
-    ...breaksAndBlocks.filter((e) => e.kind !== 'booking' && e.end > nowMinutes),
-  ].sort(byStart);
-  const earlier = active.filter((b) => !pending.includes(b));
-  const wholeDay = [...active.map(asEntry), ...breaksAndBlocks].sort(byStart);
-
   function closeWalkIn(nextMode = mode) {
     navigate('/admin', { replace: true, state: { mode: nextMode } satisfies AdminNavState });
   }
+
+  const column = (barber: Barber, heading: boolean) => (
+    <BarberColumn
+      key={barber.id}
+      shop={shop}
+      barber={barber}
+      self={barber.id === me.id}
+      heading={heading}
+      date={date}
+      mode={mode}
+      nowMinutes={nowMinutes}
+      bookings={(items ?? []).filter((b) => b.barberId === barber.id)}
+      day={dayDocs?.get(barber.id)}
+      counts={counts.get(barber.id) ?? null}
+    />
+  );
 
   return (
     <div className="min-h-screen pb-28">
@@ -133,32 +130,36 @@ export function Dashboard({ session }: { session: StaffSession }) {
         session={session}
         overline={formatDayLong(date)}
         title={mode === 'today' ? 'Today' : 'Calendar'}
+        wide={isOwner}
       >
-        <dl className="mt-4 grid grid-cols-3 gap-2">
+        {isOwner && (
+          <p className="caps mt-3 text-xs font-medium tracking-[0.2em] text-brass-light">Whole shop</p>
+        )}
+        <dl className={`grid grid-cols-3 gap-2 lg:max-w-xl ${isOwner ? 'mt-1' : 'mt-4'}`}>
           {[
-            ['Bookings', items ? active.length : '–'],
-            ['Done', items ? active.filter((b) => b.status === 'done').length : '–'],
-            ['Free slots', freeSlots ?? '–'],
+            ['Bookings', header?.bookings],
+            ['Done', header?.done],
+            ['Free slots', header?.freeSlots],
           ].map(([label, value]) => (
             <div
               key={label}
               className="flex flex-col-reverse rounded-xl border border-cream/15 bg-cream/5 px-3 py-2"
             >
               <dt className="caps text-[11px] font-medium text-brass-light">{label}</dt>
-              <dd className="caps text-3xl font-semibold tabular-nums">{value}</dd>
+              <dd className="caps text-3xl font-semibold tabular-nums">{value ?? '–'}</dd>
             </div>
           ))}
         </dl>
-        {hours && (
+        {!isOwner && myHours && (
           <p className="mt-3 text-sm text-line">
-            Working {hours.start}–{hours.end}
+            Working {myHours.start}–{myHours.end}
           </p>
         )}
       </AdminHeader>
 
-      <main className="mx-auto max-w-xl px-4 pt-5">
+      <main className={`mx-auto max-w-xl px-4 pt-5 ${isOwner ? 'lg:max-w-none lg:px-8' : ''}`}>
         {mode === 'calendar' && (
-          <div className="mb-5">
+          <div className="mb-5 lg:max-w-xl">
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -200,56 +201,54 @@ export function Dashboard({ session }: { session: StaffSession }) {
           <Notice tone="error">Couldn't load bookings. Check your connection and refresh.</Notice>
         ) : !items ? (
           <p className="text-sm text-muted-strong">Loading…</p>
+        ) : !isOwner ? (
+          column(me, false)
         ) : (
           <>
-            {offReason && (
-              <Notice tone="warning" className="mb-4">
-                {offReason}
-              </Notice>
-            )}
-
-            {mode === 'today' ? (
-              <>
-                {upNext && <UpNextCard booking={upNext} nowMinutes={nowMinutes} />}
-
-                <SectionLabel className="mt-6">Later today</SectionLabel>
-                {later.length === 0 ? (
-                  <Empty>{upNext ? 'Nothing else today.' : 'No more bookings today.'}</Empty>
-                ) : (
-                  <EntryList entries={later} />
-                )}
-
-                {earlier.length > 0 && (
-                  <>
-                    <SectionLabel className="mt-6">Earlier today</SectionLabel>
-                    <EntryList entries={earlier.map(asEntry)} />
-                  </>
-                )}
-              </>
-            ) : wholeDay.length === 0 ? (
-              <Empty>No bookings on this day.</Empty>
-            ) : (
-              <EntryList entries={wholeDay} />
-            )}
-
-            {cancelled.length > 0 && (
-              <div className="mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowCancelled(!showCancelled)}
-                  aria-expanded={showCancelled}
-                  className={`${linkButton} text-muted-strong`}
-                >
-                  <ChevronDown
-                    aria-hidden
-                    size={16}
-                    className={showCancelled ? 'rotate-180 transition' : 'transition'}
-                  />
-                  {showCancelled ? 'Hide' : 'Show'} cancelled ({cancelled.length})
-                </button>
-                {showCancelled && <EntryList entries={cancelled.map(asEntry)} />}
+            {/* Phone: one barber at a time. */}
+            <div className="lg:hidden">
+              <div role="group" aria-label="Barber" className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1">
+                {shown.map((b) => {
+                  const c = counts.get(b.id);
+                  const current = b.id === selected?.id;
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      aria-pressed={current}
+                      onClick={() => setSelectedId(b.id)}
+                      className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm font-semibold ${
+                        current ? 'border-charcoal bg-charcoal text-cream' : 'border-line bg-card text-ink'
+                      }`}
+                    >
+                      <span
+                        aria-hidden
+                        className={`caps flex h-8 w-8 items-center justify-center rounded-full text-xs ${
+                          current ? 'bg-brass text-charcoal' : 'bg-cream'
+                        }`}
+                      >
+                        {initials(b.name)}
+                      </span>
+                      {b.name.split(' ')[0]}
+                      <span className={`tabular-nums ${current ? 'text-brass-light' : 'text-muted-strong'}`}>
+                        {c ? c.bookings : '–'}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            )}
+              {selected && column(selected, true)}
+            </div>
+
+            {/* Wide screen: every barber side by side. */}
+            <div className="hidden overflow-x-auto pb-4 lg:block">
+              <div
+                className="grid gap-4"
+                style={{ gridTemplateColumns: `repeat(${shown.length}, minmax(18rem, 1fr))` }}
+              >
+                {shown.map((b) => column(b, true))}
+              </div>
+            </div>
           </>
         )}
       </main>
@@ -259,16 +258,149 @@ export function Dashboard({ session }: { session: StaffSession }) {
       {nav.walkIn && (
         <AddBookingSheet
           shop={shop}
-          barber={barber}
+          barbers={isOwner ? barbers.filter((b) => b.active) : [me]}
+          initialBarberId={isOwner && selected ? selected.id : me.id}
           initialDate={date}
           onClose={() => closeWalkIn()}
-          onAdded={(addedDate) => {
+          onAdded={(addedDate, barberId) => {
             setCalendarDate(addedDate);
+            setSelectedId(barberId);
             closeWalkIn(addedDate === today && mode === 'today' ? 'today' : 'calendar');
           }}
         />
       )}
     </div>
+  );
+}
+
+interface ColumnProps {
+  shop: ShopSettings;
+  barber: Barber;
+  /** The signed-in barber's own column ("your day off" rather than "Karim's day off"). */
+  self: boolean;
+  /** Shows his name and numbers on top (the owner's view). */
+  heading: boolean;
+  date: DateKey;
+  mode: 'today' | 'calendar';
+  nowMinutes: number;
+  /** His bookings that day, every status. */
+  bookings: ShopStaffBooking[];
+  day: BarberDay | undefined;
+  counts: DayCounts | null;
+}
+
+/** One barber's day: up next, later and earlier today (or the whole day), and cancelled ones. */
+function BarberColumn({ shop, barber, self, heading, date, mode, nowMinutes, bookings, day, counts }: ColumnProps) {
+  const [showCancelled, setShowCancelled] = useState(false);
+  const hours = barberHoursOn(shop, barber, date);
+  const offReason = notWorkingReason(shop, barber, date, self);
+
+  const active = bookings.filter((b) => b.status !== 'cancelled');
+  const cancelled = bookings.filter((b) => b.status === 'cancelled');
+
+  const breaksAndBlocks: Entry[] = [
+    ...(hours?.breaks ?? []).map((b) => ({
+      kind: 'break' as const,
+      start: timeToMinutes(b.start),
+      end: timeToMinutes(b.end),
+    })),
+    ...blockedRanges(day?.blocked ?? []).map((b) => ({
+      kind: 'blocked' as const,
+      start: timeToMinutes(b.start),
+      end: timeToMinutes(b.end),
+    })),
+  ];
+  const asEntry = (booking: ShopStaffBooking): Entry => ({
+    kind: 'booking',
+    start: timeToMinutes(booking.startTime),
+    booking,
+  });
+  const byStart = (a: Entry, b: Entry) => a.start - b.start;
+
+  // Today: the first booking not over yet is up next, the rest of the day follows.
+  const pending = active.filter((b) => b.status === 'booked' && endOf(b) > nowMinutes);
+  const upNext = mode === 'today' ? pending[0] : undefined;
+  const later = [
+    ...pending.slice(1).map(asEntry),
+    ...breaksAndBlocks.filter((e) => e.kind !== 'booking' && e.end > nowMinutes),
+  ].sort(byStart);
+  const earlier = active.filter((b) => !pending.includes(b));
+  const wholeDay = [...active.map(asEntry), ...breaksAndBlocks].sort(byStart);
+
+  return (
+    <section aria-label={heading ? barber.name : undefined} className="min-w-0">
+      {heading && (
+        <div className="mb-4 flex items-center gap-3">
+          <span
+            aria-hidden
+            className="caps flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-charcoal font-semibold text-brass-light"
+          >
+            {initials(barber.name)}
+          </span>
+          <div className="min-w-0">
+            <h2 className="caps truncate text-lg font-semibold">
+              {barber.name}
+              {!barber.active && <span className="text-sm font-medium text-muted-strong"> · inactive</span>}
+            </h2>
+            <p className="text-sm text-muted-strong tabular-nums">
+              {counts
+                ? `${counts.bookings} booked · ${counts.done} done · ${counts.freeSlots} free`
+                : 'Loading…'}
+              {hours && ` · ${hours.start}–${hours.end}`}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {offReason && (
+        <Notice tone="warning" className="mb-4">
+          {offReason}
+        </Notice>
+      )}
+
+      {mode === 'today' ? (
+        <>
+          {upNext && <UpNextCard booking={upNext} nowMinutes={nowMinutes} />}
+
+          <SectionLabel className={upNext ? 'mt-6' : ''}>Later today</SectionLabel>
+          {later.length === 0 ? (
+            <Empty>{upNext ? 'Nothing else today.' : 'No more bookings today.'}</Empty>
+          ) : (
+            <EntryList entries={later} />
+          )}
+
+          {earlier.length > 0 && (
+            <>
+              <SectionLabel className="mt-6">Earlier today</SectionLabel>
+              <EntryList entries={earlier.map(asEntry)} />
+            </>
+          )}
+        </>
+      ) : wholeDay.length === 0 ? (
+        <Empty>No bookings on this day.</Empty>
+      ) : (
+        <EntryList entries={wholeDay} />
+      )}
+
+      {cancelled.length > 0 && (
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => setShowCancelled(!showCancelled)}
+            aria-expanded={showCancelled}
+            className={`${linkButton} text-muted-strong`}
+          >
+            <ChevronDown
+              aria-hidden
+              size={16}
+              className={showCancelled ? 'rotate-180 transition' : 'transition'}
+            />
+            {showCancelled ? 'Hide' : 'Show'} cancelled ({cancelled.length})
+          </button>
+          {showCancelled && <EntryList entries={cancelled.map(asEntry)} />}
+        </div>
+      )}
+    </section>
   );
 }
 

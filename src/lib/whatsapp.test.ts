@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ShopConfirmedBooking } from '../types';
-import { bookingMessage, bookingWhatsappLink, whatsappLink } from './whatsapp';
+import { bookingMessage, bookingWhatsappLink, movedMessage, whatsappLink } from './whatsapp';
 
 const BOOKING: ShopConfirmedBooking = {
   bookingCode: 'K7M2QX',
@@ -38,5 +38,22 @@ describe('booking WhatsApp message', () => {
 
   it('a plain chat link has digits only', () => {
     expect(whatsappLink('+961 70-123 456')).toBe('https://wa.me/96170123456');
+  });
+});
+
+describe('moved booking WhatsApp message', () => {
+  it('tells the customer their new barber, day, time and code', () => {
+    const moved = {
+      ...BOOKING,
+      id: 'K7M2QX',
+      phone: '+96170111111',
+      status: 'booked' as const,
+      customerEmail: null,
+      barberId: 'sami',
+      barberName: 'Sami',
+    };
+    expect(movedMessage(moved, 'Sassine Maatouk')).toBe(
+      'Hi Rami, your booking at Sassine Maatouk on Monday, October 26 at 11:00 is now with Sami. Booking code: K7M2QX',
+    );
   });
 });

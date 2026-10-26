@@ -78,6 +78,8 @@ const BOOKINGS: DemoBooking[] = [
   { code: 'DEM2BB', barberId: 'karim', date: DEMO_DAY, time: '10:00', service: service('haircut-beard'), name: 'Sara', phone: '+96170222222' },
   { code: 'DEM2CC', barberId: 'karim', date: DEMO_DAY, time: '11:00', service: service('beard'), name: 'Nadim', phone: '+96170333333' },
   { code: 'DEM2DD', barberId: 'sami', date: DEMO_DAY, time: '12:30', service: service('haircut'), name: 'Walk-in', phone: null },
+  // For the owner: deactivating Fadi lists this booking to move (Tony is free then) or cancel.
+  { code: 'DEM2EE', barberId: 'fadi', date: DEMO_DAY, time: '15:00', service: service('haircut'), name: 'Nour', phone: '+96170123123' },
 ];
 
 /** Minutes since midnight now, in the shop's time zone, rounded up to the 15-min grid. */

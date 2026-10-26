@@ -9,16 +9,18 @@ interface Props {
   /** The small line above the title, e.g. the date. */
   overline?: string;
   title: string;
+  /** Spans a wide screen, for the owner's barbers side by side. */
+  wide?: boolean;
   children?: ReactNode;
 }
 
 /** The dark header of the staff pages: the shop's logo and name, who is signed in, the page. */
-export function AdminHeader({ session, overline, title, children }: Props) {
+export function AdminHeader({ session, overline, title, wide = false, children }: Props) {
   const logo = useBranding()?.logo ?? null;
   return (
     <header className="bg-charcoal text-cream">
       <BarberPole />
-      <div className="mx-auto max-w-xl px-4 pb-5 pt-3">
+      <div className={`mx-auto max-w-xl px-4 pb-5 pt-3 ${wide ? 'lg:max-w-none lg:px-8' : ''}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             {logo && <img src={logo} alt="" className="h-9 w-9 shrink-0 rounded-lg object-contain" />}
