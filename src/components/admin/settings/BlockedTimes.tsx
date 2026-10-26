@@ -1,27 +1,34 @@
 import { useEffect, useState } from 'react';
-import { blockTime, subscribeBlockedTimes, subscribeBookings, unblockTime } from '../../../data/api';
-import { hoursOn, overlaps } from '../../../lib/schedule';
+import { subscribeBookingsOn } from '../../../data/bookings';
+import { blockTime, subscribeBlockedTimes, unblockTime } from '../../../data/days';
+import { store } from '../../../data/firebase';
+import { barberHoursOn, shopHoursOn } from '../../../lib/barberSchedule';
+import { overlaps } from '../../../lib/schedule';
+import { blockError } from '../../../lib/staffDay';
 import { formatDayLong, timeToMinutes } from '../../../lib/time';
-import type { AdminBooking, BlockedTime, DateKey, Settings } from '../../../types';
-import { BookingCard } from '../BookingCard';
+import type { Barber, BlockedTime, DateKey, ShopSettings, ShopStaffBooking } from '../../../types';
 import { inputBase } from '../../ui';
+import { BookingCard } from '../BookingCard';
 import { cardClass, removeButtonClass, Section, smallButtonClass, TimeSelect } from './fields';
 
 interface Props {
   today: DateKey;
-  settings: Settings;
+  shop: ShopSettings;
+  /** The signed-in barber: only his own time is blocked. */
+  barber: Barber;
 }
 
 /**
- * Blocks a time range on one day, saved straight away (not part of the settings draft).
- * Blocked times are slot docs, so customers' availability and the rules treat them as taken.
- * Times already booked stay with their bookings: they're listed so Eddy can cancel them first.
+ * Blocks a time range on one day of the barber's own, saved straight away (not part of the
+ * hours draft), so customers can't book it. Only inside the shop's hours, on a day it's open.
+ * Times already booked stay with their bookings: they're listed so he can cancel them first.
  */
-export function BlockedTimes({ today, settings }: Props) {
+export function BlockedTimes({ today, shop, barber }: Props) {
+  const barberId = barber.id;
   const [date, setDate] = useState(today);
   const [start, setStart] = useState('16:00');
   const [end, setEnd] = useState('17:00');
-  const [dayBookings, setDayBookings] = useState<{ date: DateKey; items: AdminBooking[] } | null>(
+  const [dayBookings, setDayBookings] = useState<{ date: DateKey; items: ShopStaffBooking[] } | null>(
     null,
   );
   const [blocked, setBlocked] = useState<BlockedTime[] | null>(null);
@@ -30,28 +37,30 @@ export function BlockedTimes({ today, settings }: Props) {
 
   useEffect(
     () =>
-      subscribeBookings(
+      subscribeBookingsOn(
+        store,
+        barberId,
         date,
         (items) => setDayBookings({ date, items }),
         (err) => console.error(err),
       ),
-    [date],
+    [barberId, date],
   );
 
   useEffect(
     () =>
-      subscribeBlockedTimes(today, setBlocked, (err) => {
+      subscribeBlockedTimes(store, barberId, today, setBlocked, (err) => {
         console.error(err);
         setMessage({ error: true, text: "Couldn't load blocked times. Check your connection." });
       }),
-    [today],
+    [barberId, today],
   );
 
   const from = timeToMinutes(start);
   const to = timeToMinutes(end);
-  const validRange = from < to;
+  const rangeError = blockError(shop, date, start, end);
   const clashes =
-    dayBookings?.date === date && validRange
+    dayBookings?.date === date && from < to
       ? dayBookings.items.filter(
           (b) =>
             b.status === 'booked' &&
@@ -63,13 +72,15 @@ export function BlockedTimes({ today, settings }: Props) {
             ),
         )
       : [];
-  const hours = hoursOn(settings, date);
+  const shopHours = shopHoursOn(shop, date);
+  const myHours = barberHoursOn(shop, barber, date);
 
   async function block() {
     setMessage(null);
+    if (rangeError) return;
     setBusy(true);
     try {
-      const count = await blockTime(date, start, end);
+      const count = await blockTime(store, barberId, date, start, end);
       setMessage({
         error: false,
         text:
@@ -87,7 +98,7 @@ export function BlockedTimes({ today, settings }: Props) {
   async function unblock(range: BlockedTime) {
     setMessage(null);
     try {
-      await unblockTime(range.date, range.start, range.end);
+      await unblockTime(store, barberId, range.date, range.start, range.end);
     } catch (err) {
       console.error(err);
       setMessage({ error: true, text: "Couldn't unblock. Check your connection and try again." });
@@ -97,7 +108,7 @@ export function BlockedTimes({ today, settings }: Props) {
   return (
     <Section
       title="Blocked times"
-      description="Block part of a day so customers can't book it. Saved straight away."
+      description="Block part of a day so customers can't book you then. Saved straight away."
     >
       {blocked && blocked.length > 0 && (
         <ul className="mb-3 grid gap-2">
@@ -136,14 +147,30 @@ export function BlockedTimes({ today, settings }: Props) {
           />
         </label>
         <p className="mt-1 text-sm text-muted">
-          {hours ? `Open ${hours.start}–${hours.end} that day.` : 'The shop is closed that day.'}
+          {!shopHours
+            ? 'The shop is closed that day.'
+            : `Shop open ${shopHours.start}–${shopHours.end}. ${
+                myHours ? `You work ${myHours.start}–${myHours.end}.` : "You're not working that day."
+              }`}
         </p>
         <div className="mt-3 flex items-center gap-2">
-          <TimeSelect label="Block from" value={start} onChange={setStart} />
+          <TimeSelect
+            label="Block from"
+            value={start}
+            onChange={setStart}
+            min={shopHours?.start}
+            max={shopHours?.end}
+          />
           <span className="text-muted">to</span>
-          <TimeSelect label="Block until" value={end} onChange={setEnd} />
+          <TimeSelect
+            label="Block until"
+            value={end}
+            onChange={setEnd}
+            min={shopHours?.start}
+            max={shopHours?.end}
+          />
         </div>
-        {!validRange && <p className="mt-2 text-sm text-pole-red">The end must be after the start.</p>}
+        {rangeError && <p className="mt-2 text-sm text-pole-red">{rangeError}</p>}
 
         {clashes.length > 0 && (
           <div className="mt-4 rounded-xl border border-brass/50 bg-brass/10 p-3">
@@ -170,7 +197,7 @@ export function BlockedTimes({ today, settings }: Props) {
         <button
           type="button"
           onClick={block}
-          disabled={busy || !validRange}
+          disabled={busy || rangeError !== null}
           className={`${smallButtonClass} mt-3 w-full`}
         >
           {busy

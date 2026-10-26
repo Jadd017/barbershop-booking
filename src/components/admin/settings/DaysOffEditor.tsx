@@ -11,6 +11,10 @@ interface Props {
   today: DateKey;
   daysOff: DateKey[];
   onChange: (daysOff: DateKey[]) => void;
+  title?: string;
+  description?: string;
+  /** Days that are off anyway (the shop's closed days, for a barber's own days off), shown below. */
+  closedAnyway?: DateKey[];
 }
 
 /** Sorted dates grouped into runs of consecutive days. */
@@ -24,7 +28,14 @@ function toRanges(dates: DateKey[]): { from: DateKey; to: DateKey }[] {
   return ranges;
 }
 
-export function DaysOffEditor({ today, daysOff, onChange }: Props) {
+export function DaysOffEditor({
+  today,
+  daysOff,
+  onChange,
+  title = 'Days off',
+  description = 'The shop is closed on these days (vacation, holidays).',
+  closedAnyway = [],
+}: Props) {
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -43,9 +54,10 @@ export function DaysOffEditor({ today, daysOff, onChange }: Props) {
   }
 
   const upcoming = toRanges(daysOff.filter((d) => d >= today));
+  const closed = toRanges(closedAnyway.filter((d) => d >= today));
 
   return (
-    <Section title="Days off" description="The shop is closed on these days (vacation, holidays).">
+    <Section title={title} description={description}>
       {upcoming.length > 0 && (
         <ul className="mb-3 grid gap-2">
           {upcoming.map(({ from: a, to: b }) => (
@@ -99,6 +111,20 @@ export function DaysOffEditor({ today, daysOff, onChange }: Props) {
           + Add {to && to !== from ? 'days off' : 'day off'}
         </button>
       </div>
+
+      {closed.length > 0 && (
+        <div className="mt-3 text-sm text-muted-strong">
+          <p className="font-medium">The shop is closed on:</p>
+          <ul className="list-disc pl-5">
+            {closed.map(({ from: a, to: b }) => (
+              <li key={a}>
+                {formatDayLong(a)}
+                {a !== b && ` – ${formatDayLong(b)}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </Section>
   );
 }

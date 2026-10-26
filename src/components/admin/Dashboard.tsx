@@ -2,29 +2,29 @@ import { ChevronDown, ChevronLeft, ChevronRight, Coffee, Lock } from 'lucide-rea
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { SLOT_MINUTES } from '../../config';
-import { subscribeBlockedTimes, subscribeBookings } from '../../data/api';
+import { subscribeBookingsOn } from '../../data/bookings';
+import { subscribeDay } from '../../data/days';
+import { store } from '../../data/firebase';
 import { useNow } from '../../hooks/useNow';
-import { useSettings } from '../../hooks/useSettings';
-import { useStartTimes } from '../../hooks/useStartTimes';
-import { hoursOn } from '../../lib/schedule';
+import { barberHoursOn } from '../../lib/barberSchedule';
+import { barberStartTimes } from '../../lib/barberSlots';
+import { blockedRanges, notWorkingReason } from '../../lib/staffDay';
 import { addDays, formatDayLong, minutesToTime, timeToMinutes, toDateKey } from '../../lib/time';
-import type { AdminBooking, BlockedTime, DateKey, Service } from '../../types';
+import type { BarberDay, DateKey, ShopStaffBooking } from '../../types';
 import { buttonOutline, linkButton, Notice, SectionLabel, StatusChip } from '../ui';
 import { AddBookingSheet } from './AddBookingSheet';
 import { AdminHeader } from './AdminHeader';
 import { AdminNav, type AdminNavState } from './AdminNav';
 import { BookingActions } from './BookingActions';
 import { BookingDetails } from './BookingCard';
-
-/** Counting free start times for a one-slot service gives the number of free slots. */
-const ONE_SLOT: Service = { id: 'slot', name: 'Slot', durationMinutes: SLOT_MINUTES };
+import type { StaffSession } from './session';
 
 /** One line of a day's list: a booking, a break or a blocked time. */
 type Entry =
-  | { kind: 'booking'; start: number; booking: AdminBooking }
+  | { kind: 'booking'; start: number; booking: ShopStaffBooking }
   | { kind: 'break' | 'blocked'; start: number; end: number };
 
-const endOf = (b: AdminBooking) => timeToMinutes(b.startTime) + b.durationMinutes;
+const endOf = (b: ShopStaffBooking) => timeToMinutes(b.startTime) + b.durationMinutes;
 
 /** "25 min", "1 h", "1 h 20 min". */
 function formatWait(minutes: number): string {
@@ -35,10 +35,13 @@ function formatWait(minutes: number): string {
 }
 
 /**
- * Eddy's day. "Today" shows who's up next and the rest of the day; "Calendar" shows any day.
+ * The signed-in barber's day: only his own bookings, breaks and blocked time (the owner, too, sees
+ * his own here). "Today" shows who's up next and the rest of the day; "Calendar" shows any day.
  * Which one, and whether the walk-in sheet is open, lives in the history state (AdminNav).
  */
-export function Dashboard({ onLogout }: { onLogout: () => void }) {
+export function Dashboard({ session }: { session: StaffSession }) {
+  const { shop, barber } = session;
+  const barberId = barber.id;
   const location = useLocation();
   const navigate = useNavigate();
   const nav = (location.state ?? {}) as AdminNavState;
@@ -50,15 +53,15 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
   const date = mode === 'today' ? today : calendarDate;
 
   // Both tagged with their date, so a previous day's list is never shown for a new day.
-  const [bookings, setBookings] = useState<{ date: DateKey; items: AdminBooking[] } | null>(null);
-  const [blocked, setBlocked] = useState<{ date: DateKey; items: BlockedTime[] } | null>(null);
+  const [bookings, setBookings] = useState<{ date: DateKey; items: ShopStaffBooking[] } | null>(null);
+  const [day, setDay] = useState<BarberDay | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
-  const { settings } = useSettings();
-  const { startTimes } = useStartTimes(date, ONE_SLOT, settings ?? null);
 
   useEffect(() => {
-    return subscribeBookings(
+    return subscribeBookingsOn(
+      store,
+      barberId,
       date,
       (items) => {
         setBookings({ date, items });
@@ -69,25 +72,24 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setLoadError(true);
       },
     );
-  }, [date]);
+  }, [barberId, date]);
 
   useEffect(
-    () =>
-      subscribeBlockedTimes(
-        date,
-        (all) => setBlocked({ date, items: all.filter((b) => b.date === date) }),
-        (err) => console.error(err),
-      ),
-    [date],
+    () => subscribeDay(store, barberId, date, setDay, (err) => console.error(err)),
+    [barberId, date],
   );
 
   const items = bookings?.date === date ? bookings.items : null;
-  const blockedToday = blocked?.date === date ? blocked.items : [];
-  const hours = settings ? hoursOn(settings, date) : null;
+  const thisDay = day?.date === date && day.barberId === barberId ? day : null;
+  const hours = barberHoursOn(shop, barber, date);
+  const offReason = notWorkingReason(shop, barber, date);
 
   const active = items?.filter((b) => b.status !== 'cancelled') ?? [];
   const cancelled = items?.filter((b) => b.status === 'cancelled') ?? [];
-  const freeSlots = startTimes?.filter((o) => o.available).length;
+  // Free 15-min slots left in his hours (not booked, blocked, in a break or past).
+  const freeSlots = thisDay
+    ? barberStartTimes(date, SLOT_MINUTES, shop, barber, thisDay, now).filter((o) => o.available).length
+    : undefined;
 
   // Minutes since midnight that count as "now" on `date` (past days are all over).
   const nowMinutes = date === today ? now.getHours() * 60 + now.getMinutes() : date < today ? 24 * 60 : -1;
@@ -98,13 +100,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
       start: timeToMinutes(b.start),
       end: timeToMinutes(b.end),
     })),
-    ...blockedToday.map((b) => ({
+    ...blockedRanges(thisDay?.blocked ?? []).map((b) => ({
       kind: 'blocked' as const,
       start: timeToMinutes(b.start),
       end: timeToMinutes(b.end),
     })),
   ];
-  const asEntry = (booking: AdminBooking): Entry => ({
+  const asEntry = (booking: ShopStaffBooking): Entry => ({
     kind: 'booking',
     start: timeToMinutes(booking.startTime),
     booking,
@@ -128,9 +130,9 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="min-h-screen pb-28">
       <AdminHeader
+        session={session}
         overline={formatDayLong(date)}
         title={mode === 'today' ? 'Today' : 'Calendar'}
-        onLogout={onLogout}
       >
         <dl className="mt-4 grid grid-cols-3 gap-2">
           {[
@@ -147,6 +149,11 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             </div>
           ))}
         </dl>
+        {hours && (
+          <p className="mt-3 text-sm text-line">
+            Working {hours.start}–{hours.end}
+          </p>
+        )}
       </AdminHeader>
 
       <main className="mx-auto max-w-xl px-4 pt-5">
@@ -195,9 +202,9 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
           <p className="text-sm text-muted-strong">Loading…</p>
         ) : (
           <>
-            {settings && !hours && (
+            {offReason && (
               <Notice tone="warning" className="mb-4">
-                The shop is closed {date === today ? 'today' : 'on this day'}.
+                {offReason}
               </Notice>
             )}
 
@@ -249,9 +256,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
       <AdminNav active={mode} />
 
-      {nav.walkIn && settings && (
+      {nav.walkIn && (
         <AddBookingSheet
-          settings={settings}
+          shop={shop}
+          barber={barber}
           initialDate={date}
           onClose={() => closeWalkIn()}
           onAdded={(addedDate) => {
@@ -273,7 +281,7 @@ function Empty({ children }: { children: string }) {
 }
 
 /** The next customer, with big Done / No-show buttons. */
-function UpNextCard({ booking, nowMinutes }: { booking: AdminBooking; nowMinutes: number }) {
+function UpNextCard({ booking, nowMinutes }: { booking: ShopStaffBooking; nowMinutes: number }) {
   const wait = timeToMinutes(booking.startTime) - nowMinutes;
   return (
     <section
@@ -328,7 +336,7 @@ function EntryList({ entries }: { entries: Entry[] }) {
 }
 
 /** A compact line that opens to show the details and actions. */
-function BookingRow({ booking }: { booking: AdminBooking }) {
+function BookingRow({ booking }: { booking: ShopStaffBooking }) {
   const [open, setOpen] = useState(false);
   return (
     <li className={booking.status === 'cancelled' ? 'opacity-60' : ''}>

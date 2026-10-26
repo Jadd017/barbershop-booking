@@ -1,8 +1,8 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
 import { ShopTheme } from './components/ShopTheme';
-import { AdminPage } from './pages/AdminPage';
 import { BookingPage } from './pages/BookingPage';
 import { MyBookingsPage } from './pages/MyBookingsPage';
+import { StaffPage } from './pages/StaffPage';
 
 export default function App() {
   return (
@@ -13,8 +13,8 @@ export default function App() {
         <Route path="/my-bookings" element={<MyBookingsPage />} />
         {/* Where the old code + phone lookup was, in case someone saved the link. */}
         <Route path="/manage" element={<Navigate to="/my-bookings" replace />} />
-        <Route path="/admin" element={<AdminPage view="bookings" />} />
-        <Route path="/admin/settings" element={<AdminPage view="settings" />} />
+        <Route path="/admin" element={<StaffPage view="bookings" />} />
+        <Route path="/admin/settings" element={<StaffPage view="settings" />} />
       </Routes>
     </BrowserRouter>
   );

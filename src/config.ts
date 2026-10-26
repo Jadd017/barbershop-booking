@@ -1,9 +1,6 @@
 /** Size of one time slot on the booking grid, in minutes. */
 export const SLOT_MINUTES = 15;
 
-/** Firebase Auth UID of the only user allowed into /admin (Eddy). */
-export const ADMIN_UID = 'HHBoRoG4jphMLu2OjKpYTGJTKd42';
-
 /** The shop's time zone. Booking times are local to it, whatever the customer's device says. */
 export const SHOP_TIME_ZONE = 'Asia/Beirut';
 

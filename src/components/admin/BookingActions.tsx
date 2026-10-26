@@ -1,12 +1,14 @@
 import { Check, MessageCircle, Phone, Undo2, UserX, X } from 'lucide-react';
 import { useState } from 'react';
-import { adminCancelBooking, setBookingStatus } from '../../data/api';
+import { setBookingStatus, staffCancelBooking } from '../../data/bookings';
+import { AlreadyCancelledError, NotCancellableError } from '../../data/errors';
+import { store } from '../../data/firebase';
 import { whatsappLink } from '../../lib/whatsapp';
-import type { AdminBooking } from '../../types';
+import type { ShopStaffBooking } from '../../types';
 import { buttonDanger, buttonDark, buttonOutline, linkButton, Notice } from '../ui';
 
 interface Props {
-  booking: AdminBooking;
+  booking: ShopStaffBooking;
   /** Offers only Cancel (no Done / No-show), for bookings that clash with the settings. */
   cancelOnly?: boolean;
 }
@@ -24,8 +26,12 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
     try {
       await action();
     } catch (err) {
-      console.error(err);
-      setError("Couldn't save. Check your connection and try again.");
+      if (err instanceof AlreadyCancelledError || err instanceof NotCancellableError) {
+        setError('This booking was already changed. The list shows it as it is now.');
+      } else {
+        console.error(err);
+        setError("Couldn't save. Check your connection and try again.");
+      }
     } finally {
       setBusy(false);
       setConfirmingCancel(false);
@@ -41,7 +47,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => run(() => setBookingStatus(booking.id, 'done'))}
+            onClick={() => run(() => setBookingStatus(store, booking.id, 'done'))}
             className={`${buttonDark} caps min-h-14 text-base`}
           >
             <Check aria-hidden size={20} className="text-brass-light" />
@@ -50,7 +56,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => run(() => setBookingStatus(booking.id, 'no-show'))}
+            onClick={() => run(() => setBookingStatus(store, booking.id, 'no-show'))}
             className={`${buttonOutline} caps min-h-14 text-base`}
           >
             <UserX aria-hidden size={20} />
@@ -109,7 +115,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
             <button
               type="button"
               disabled={busy}
-              onClick={() => run(() => adminCancelBooking(booking.id))}
+              onClick={() => run(() => staffCancelBooking(store, booking.id))}
               className={buttonDanger}
             >
               {busy ? 'Cancelling…' : 'Yes, cancel'}
@@ -122,7 +128,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
         <button
           type="button"
           disabled={busy}
-          onClick={() => run(() => setBookingStatus(booking.id, 'booked'))}
+          onClick={() => run(() => setBookingStatus(store, booking.id, 'booked'))}
           className={`${linkButton} text-muted`}
         >
           <Undo2 aria-hidden size={16} />

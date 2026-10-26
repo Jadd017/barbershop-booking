@@ -421,6 +421,20 @@ describe('staff: walk-ins, status, cancelling, blocking', () => {
     await bookings.setBookingStatus(karim(), a.bookingCode, 'booked');
     await bookings.staffCancelBooking(karim(), a.bookingCode);
     expect(await bookedTimes('karim')).toEqual([]);
+
+    // Sami's booking: Karim can't read it, mark it, or list it, filtered or not.
+    const samis = all.find((b) => b.barberId === 'sami')!;
+    await expect(getDoc(doc(karim().db, 'bookings', samis.id))).rejects.toThrow();
+    await expect(bookings.setBookingStatus(karim(), samis.id, 'done')).rejects.toThrow();
+    await expect(
+      first((ok, fail) => bookings.subscribeUpcomingBookings(karim(), 'sami', TODAY, ok, fail)),
+    ).rejects.toThrow();
+    await expect(
+      first((ok, fail) => bookings.subscribeUpcomingBookings(karim(), null, TODAY, ok, fail)),
+    ).rejects.toThrow();
+    await expect(
+      first((ok, fail) => bookings.subscribeBookingsOn(karim(), null, TOMORROW, ok, fail)),
+    ).rejects.toThrow();
   });
 
   it('blocking skips booked slots, customers can\'t book blocked time, unblocking frees it', async () => {
@@ -561,9 +575,15 @@ describe('staff logins (Auth emulator)', () => {
     );
     // At 10:00 Tony and Karim are booked, Sami starts at 12:00 and Omar is off: only Fadi is free.
     expect(booked.barberId).toBe('fadi');
-    const user = await accounts.signInStaff(anyone(), newAuth(), 'tony', demo.DEMO_PASSWORD);
-    const me = await first((ok, fail) => accounts.subscribeMyStaff(staff({ uid: user.uid, username: 'tony' }), user.uid, ok, fail));
-    expect(me?.role).toBe('owner');
+    // The owner and 5 barbers, each acting as his own barber.
+    expect(demo.LOGINS.map((l) => l.username)).toEqual(['tony', 'karim', 'sami', 'omar', 'fadi', 'elie']);
+    for (const login of demo.LOGINS) {
+      const user = await accounts.signInStaff(anyone(), newAuth(), login.username, demo.DEMO_PASSWORD);
+      const me = await first((ok, fail) =>
+        accounts.subscribeMyStaff(staff({ uid: user.uid, username: login.username }), user.uid, ok, fail),
+      );
+      expect(me).toMatchObject({ barberId: login.barberId, role: login.role, active: true });
+    }
   });
 
   it('a barber changes his own password; a wrong current password is refused', async () => {

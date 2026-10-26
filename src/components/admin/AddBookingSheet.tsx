@@ -1,17 +1,23 @@
 import { X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { MAX_NAME_LENGTH } from '../../config';
-import { createBooking, SlotTakenError, TimePassedError } from '../../data/api';
-import { useStartTimes } from '../../hooks/useStartTimes';
+import { createWalkIn } from '../../data/bookings';
+import { SlotTakenError } from '../../data/errors';
+import { store } from '../../data/firebase';
+import { useBarberTimes } from '../../hooks/useBarberTimes';
+import { isPast } from '../../lib/slots';
+import { notWorkingReason } from '../../lib/staffDay';
 import { normalizeLebanesePhone } from '../../lib/phone';
 import { toDateKey } from '../../lib/time';
-import type { DateKey, Settings, TimeString } from '../../types';
+import type { Barber, DateKey, ShopSettings, TimeString } from '../../types';
 import { ServicePicker } from '../ServicePicker';
 import { TimeGrid } from '../TimeGrid';
 import { buttonBrass, inputBase, Notice, StepLabel } from '../ui';
 
 interface Props {
-  settings: Settings;
+  shop: ShopSettings;
+  /** The signed-in barber: walk-ins are only ever added for him. */
+  barber: Barber;
   initialDate: DateKey;
   onClose: () => void;
   /** Called with the day the booking was added to, so the dashboard can show it. */
@@ -19,10 +25,12 @@ interface Props {
 }
 
 /**
- * Walk-ins and phone bookings. Uses the same live availability and the same
- * createBooking transaction as customers, so it can't double-book either.
+ * Walk-ins and phone bookings, for the signed-in barber only. Offers the times he's free (his
+ * hours, without breaks, blocked or booked time), live. createWalkIn claims the slots in one
+ * transaction with his day, and the rules refuse a slot that's already booked, so it can't
+ * double-book even if someone books the same time at that moment.
  */
-export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Props) {
+export function AddBookingSheet({ shop, barber, initialDate, onClose, onAdded }: Props) {
   const [today] = useState(() => toDateKey(new Date()));
   const [serviceId, setServiceId] = useState<string | null>(null);
   const [day, setDay] = useState<DateKey>(initialDate < today ? today : initialDate);
@@ -32,8 +40,9 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const service = settings.services.find((s) => s.id === serviceId) ?? null;
-  const { startTimes, error: slotsError } = useStartTimes(day, service, settings);
+  const service = shop.services.find((s) => s.id === serviceId) ?? null;
+  const { startTimes, error: slotsError } = useBarberTimes(day, service, shop, [barber], barber.id);
+  const offReason = notWorkingReason(shop, barber, day);
   // Drops the selection if someone else books it meanwhile.
   const selectedTime = startTimes?.some((o) => o.time === time && o.available) ? time : null;
 
@@ -44,6 +53,10 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
     const trimmedName = name.trim();
     const normalizedPhone = phone.trim() ? normalizeLebanesePhone(phone) : null;
     if (!service || !selectedTime) return setError('Pick a service and a free time.');
+    if (isPast(day, selectedTime)) {
+      setTime(null);
+      return setError('This time has already passed, please pick another.');
+    }
     if (trimmedName.length < 2) return setError('Enter the customer name.');
     if (phone.trim() && !normalizedPhone) {
       return setError('That phone number looks wrong. Leave it empty if you don\'t have one.');
@@ -51,19 +64,18 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
 
     setSaving(true);
     try {
-      await createBooking({
+      await createWalkIn(store, {
         name: trimmedName,
         phone: normalizedPhone,
         service,
         date: day,
         startTime: selectedTime,
+        barberId: barber.id,
       });
       onAdded(day);
     } catch (err) {
       if (err instanceof SlotTakenError) {
         setError('Sorry, this time was just taken, please pick another.');
-      } else if (err instanceof TimePassedError) {
-        setError('This time has already passed, please pick another.');
       } else {
         console.error(err);
         setError("Couldn't save. Check your connection and try again.");
@@ -102,7 +114,7 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
           <section className="mb-6">
             <StepLabel step={1}>Service</StepLabel>
             <ServicePicker
-              services={settings.services}
+              services={shop.services}
               selectedId={serviceId}
               onSelect={(id) => {
                 setServiceId(id);
@@ -133,6 +145,8 @@ export function AddBookingSheet({ settings, initialDate, onClose, onAdded }: Pro
               <StepLabel step={3}>Time</StepLabel>
               {slotsError ? (
                 <Notice tone="error">Couldn't load times. Check your connection.</Notice>
+              ) : offReason ? (
+                <Notice tone="warning">{offReason} Pick another day.</Notice>
               ) : startTimes ? (
                 <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
               ) : (

@@ -1,20 +1,17 @@
-import { FirebaseError } from 'firebase/app';
-import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { useState, type FormEvent } from 'react';
-import { auth } from '../../data/firebase';
-import { BarberPole, buttonDark, inputBase, linkButton, Notice } from '../ui';
+import { signInStaff } from '../../data/accounts';
+import { WrongLoginError } from '../../data/errors';
+import { auth, store } from '../../data/firebase';
+import { useBranding, useShop } from '../../hooks/useShop';
+import { BarberPole, buttonDark, inputBase, Notice } from '../ui';
 
 function loginErrorMessage(err: unknown): string {
-  const code = err instanceof FirebaseError ? err.code : '';
-  switch (code) {
-    case 'auth/invalid-credential':
-    case 'auth/invalid-email':
-    case 'auth/user-not-found':
-    case 'auth/wrong-password':
-      return 'Wrong email or password.';
+  if (err instanceof WrongLoginError) return 'Wrong username or password.';
+  switch ((err as { code?: string } | null)?.code) {
     case 'auth/too-many-requests':
-      return 'Too many attempts. Wait a few minutes or reset your password.';
+      return 'Too many attempts. Wait a few minutes and try again.';
     case 'auth/network-request-failed':
+    case 'unavailable':
       return 'No connection. Check your internet and try again.';
     default:
       console.error(err);
@@ -22,45 +19,25 @@ function loginErrorMessage(err: unknown): string {
   }
 }
 
+/** Staff log in with the username and password the owner gave them. */
 export function LoginForm() {
-  const [email, setEmail] = useState('');
+  const { shop } = useShop();
+  const logo = useBranding()?.logo ?? null;
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setNotice(null);
+    if (!username.trim() || !password) return setError('Enter your username and password.');
     setBusy(true);
     try {
-      // On success, AdminPage's auth listener swaps this form for the dashboard.
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      // On success, StaffPage's auth listener swaps this form for the dashboard.
+      await signInStaff(store, auth, username, password);
     } catch (err) {
       setError(loginErrorMessage(err));
-      setBusy(false);
-    }
-  }
-
-  async function handleForgotPassword() {
-    setError(null);
-    setNotice(null);
-    if (!email.trim()) {
-      setError('Enter your email above first, then tap "Forgot password".');
-      return;
-    }
-    setBusy(true);
-    try {
-      await sendPasswordResetEmail(auth, email.trim());
-      setNotice('If that email has an account, a password reset link is on its way.');
-    } catch (err) {
-      setError(
-        err instanceof FirebaseError && err.code === 'auth/invalid-email'
-          ? 'That email address looks wrong.'
-          : loginErrorMessage(err),
-      );
-    } finally {
       setBusy(false);
     }
   }
@@ -69,9 +46,12 @@ export function LoginForm() {
     <div className="min-h-screen">
       <header className="bg-charcoal text-cream">
         <BarberPole />
-        <div className="mx-auto max-w-sm px-4 pb-6 pt-6">
-          <p className="caps text-4xl font-semibold tracking-[0.12em]">Barbershop</p>
-          <p className="caps mt-1 text-sm font-medium tracking-[0.35em] text-brass">Admin</p>
+        <div className="mx-auto flex max-w-sm items-center gap-3 px-4 pb-6 pt-6">
+          {logo && <img src={logo} alt="" className="h-14 w-14 shrink-0 rounded-xl object-contain" />}
+          <div className="min-w-0">
+            <p className="caps break-words text-3xl font-semibold tracking-[0.1em]">{shop?.shopName ?? ''}</p>
+            <p className="caps mt-1 text-sm font-medium tracking-[0.35em] text-brass">Staff</p>
+          </div>
         </div>
       </header>
 
@@ -79,12 +59,15 @@ export function LoginForm() {
         <form onSubmit={handleLogin} noValidate className="rounded-2xl border border-line bg-card p-5">
           <h1 className="caps mb-5 text-xl font-semibold">Log in</h1>
           <label className="mb-4 block">
-            <span className="caps mb-1 block text-xs font-semibold">Email</span>
+            <span className="caps mb-1 block text-xs font-semibold">Username</span>
             <input
-              type="email"
+              type="text"
               autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               disabled={busy}
               className={`${inputBase} w-full`}
             />
@@ -106,23 +89,13 @@ export function LoginForm() {
               {error}
             </Notice>
           )}
-          {notice && (
-            <Notice tone="success" className="mb-4">
-              {notice}
-            </Notice>
-          )}
 
-          <button type="submit" disabled={busy} className={`${buttonDark} caps mb-2 w-full text-base`}>
+          <button type="submit" disabled={busy} className={`${buttonDark} caps w-full text-base`}>
             {busy ? 'Please wait…' : 'Log in'}
           </button>
-          <button
-            type="button"
-            onClick={handleForgotPassword}
-            disabled={busy}
-            className={`${linkButton} w-full justify-center text-muted underline`}
-          >
-            Forgot password?
-          </button>
+          <p className="mt-4 text-center text-sm text-muted-strong">
+            Forgot your password? Ask the owner for a new login.
+          </p>
         </form>
       </main>
     </div>

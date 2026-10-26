@@ -14,10 +14,10 @@ import {
   where,
   type Firestore,
 } from 'firebase/firestore';
-import { SLOT_MINUTES } from '../config';
 import { dayDocId, emptyDay, fromDayDoc, slotKey, slotTime, type DayDoc } from '../lib/barberDoc';
 import { slotsNeeded } from '../lib/slots';
-import { minutesToTime, timeToMinutes } from '../lib/time';
+import { blockedRanges } from '../lib/staffDay';
+import { timeToMinutes } from '../lib/time';
 import type { BarberDay, BlockedTime, DateKey, TimeString } from '../types';
 import type { Store } from './store';
 
@@ -83,19 +83,14 @@ export function subscribeBlockedTimes(
   return onSnapshot(
     q,
     (snapshot) => {
-      const ranges: BlockedTime[] = [];
       const days = snapshot.docs
         .map((d) => d.data() as DayDoc)
         .sort((a, b) => a.date.localeCompare(b.date));
-      for (const day of days) {
-        for (const start of Object.keys(day.blocked ?? {}).sort().map(slotTime)) {
-          const end = minutesToTime(timeToMinutes(start) + SLOT_MINUTES);
-          const last = ranges[ranges.length - 1];
-          if (last?.date === day.date && last.end === start) last.end = end;
-          else ranges.push({ date: day.date, start, end });
-        }
-      }
-      onChange(ranges);
+      onChange(
+        days.flatMap((day) =>
+          blockedRanges(Object.keys(day.blocked ?? {}).map(slotTime)).map((r) => ({ date: day.date, ...r })),
+        ),
+      );
     },
     onError,
   );

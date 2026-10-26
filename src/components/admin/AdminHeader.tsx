@@ -1,25 +1,37 @@
 import { LogOut } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useBranding } from '../../hooks/useShop';
+import { BarberPole } from '../ui';
+import type { StaffSession } from './session';
 
 interface Props {
+  session: StaffSession;
   /** The small line above the title, e.g. the date. */
   overline?: string;
   title: string;
-  onLogout: () => void;
   children?: ReactNode;
 }
 
-/** The charcoal header of Eddy's pages. */
-export function AdminHeader({ overline, title, onLogout, children }: Props) {
+/** The dark header of the staff pages: the shop's logo and name, who is signed in, the page. */
+export function AdminHeader({ session, overline, title, children }: Props) {
+  const logo = useBranding()?.logo ?? null;
   return (
     <header className="bg-charcoal text-cream">
-      <div className="mx-auto max-w-xl px-4 pb-5 pt-4">
-        <div className="flex items-center justify-between">
-          <p className="caps text-xs font-medium tracking-[0.3em] text-brass-light">Barbershop admin</p>
+      <BarberPole />
+      <div className="mx-auto max-w-xl px-4 pb-5 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {logo && <img src={logo} alt="" className="h-9 w-9 shrink-0 rounded-lg object-contain" />}
+            <p className="caps min-w-0 truncate text-xs font-medium tracking-[0.25em] text-brass-light">
+              {session.shop.shopName}
+              <span className="text-line"> · </span>
+              {session.barber.name}
+            </p>
+          </div>
           <button
             type="button"
-            onClick={onLogout}
-            className="inline-flex min-h-11 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
+            onClick={session.onLogout}
+            className="inline-flex min-h-11 shrink-0 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
           >
             <LogOut aria-hidden size={16} />
             Log out

@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phases 0–4 done; Phases 5–9 not started.** The customer pages use the new data layer; the staff pages (`/admin`) still use the single-barber `api.ts` until Phases 5–6. Since Phase 2 the rules are the multi-barber ones, so today's single-barber pages no longer work against the emulator until Phases 3–4 switch them over. Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–5 done; Phases 6–9 not started.** Every page uses the new data layer (the single-barber `api.ts` is gone). `/admin` is the staff dashboard; until Phase 6 the owner sees only his own barber there, and the shop-wide settings (services, opening hours, window, branding) have no page. Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -105,7 +105,8 @@ anyway: it's in every wa.me link.
   - `npm run build` – type-check + build (emulator config)
   - `npm test` – unit tests; `npm run test:emu` (alias `test:rules`) – rules + data-layer tests in
     the emulator
-  - `npm run seed` – demo shop in the emulator (owner + 4 barbers, services, bookings), Phase 3
+  - `npm run seed` – demo shop in the emulator (owner + 5 barbers with logins, services,
+    bookings today and on the next open day), Phases 3 and 5
 
 ### 3.3 Build and deploy (Phase 7, used only when you say so)
 
@@ -591,7 +592,7 @@ heaviest staff writes (≥20% spare). `rules-tests/api.test.ts` (the single-barb
 left out of the run until Phase 3 rewrites it.
 
 **Phase 3 – Data layer** ✅
-Built as new files next to today's `api.ts` (which the old pages keep using until Phases 4–6):
+Built as new files next to the single-barber `api.ts` (removed in Phase 5):
 `src/data/shop.ts`, `days.ts`, `bookings.ts`, `accounts.ts`, `errors.ts`. Every function takes a
 `Store` (a Firestore and the signed-in user, `src/data/store.ts`) as its first argument, so tests
 can act as several people at the same moment; the app passes `store` from `firebase.ts`.
@@ -612,11 +613,20 @@ Also: the shop's colors replace the theme's charcoal/brass/cream at runtime (`Sh
 shop's WhatsApp number comes from `settings/shop` (the `VITE_BARBER_WHATSAPP` env var is gone),
 and the emulator's Auth banner is hidden (it covered the booking bar on phones).
 
-**Phase 5 – Staff login and barber dashboard**
+**Phase 5 – Staff login and barber dashboard** ✅
 Username login, role routing, Today / Calendar for his bookings, done/no-show, walk-ins, cancel,
 his weekly hours and breaks, days off, blocked times, change password.
 *Test:* `npm run test:emu`; manual: log in as a seeded barber, confirm he sees and can change
 only his own data and can't set hours outside the shop's.
+Done as: `pages/StaffPage.tsx` (login, live `staff/{uid}`, "No access" for customers, unknown
+or turned-off logins), the dashboard and walk-in sheet on `bookings.ts`/`days.ts` for the
+login's own barber only, `settings/MySettingsPage.tsx` (hours limited to the shop's, closed
+weekdays locked, clashing bookings listed and confirmed, "fit my hours to the shop's", days off,
+blocked times inside the shop's hours, password), pure helpers in `lib/staffDay.ts`. The seed
+has 6 logins (owner + 5 barbers) and bookings today around the time it runs. The emulator tests
+also check a barber can't read, mark or list another barber's bookings. Checklist:
+`docs/DEVELOPMENT.md`, "Staff dashboard on the emulator". `api.ts`, `useSettings`,
+`useStartTimes` and `ADMIN_UID` were removed.
 
 **Phase 6 – Owner dashboard**
 All-barbers view and barber switcher, barbers page (add, order, hours, activate/deactivate, list

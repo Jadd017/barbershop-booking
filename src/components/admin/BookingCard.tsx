@@ -1,11 +1,11 @@
 import { formatLebanesePhone } from '../../lib/phone';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../../lib/time';
-import type { AdminBooking } from '../../types';
+import type { ShopStaffBooking } from '../../types';
 import { StatusChip } from '../ui';
 import { BookingActions } from './BookingActions';
 
 interface Props {
-  booking: AdminBooking;
+  booking: ShopStaffBooking;
   /** Shows the booking's date, for lists that span several days. */
   showDate?: boolean;
   /** Offers only Cancel (no Done / No-show), for bookings that clash with the settings. */
@@ -42,8 +42,8 @@ export function BookingCard({ booking, showDate = false, cancelOnly = false }: P
   );
 }
 
-/** Name, phone, Google account and code. */
-export function BookingDetails({ booking }: { booking: AdminBooking }) {
+/** Name, phone, Google account, code, and whether the customer chose "Any barber". */
+export function BookingDetails({ booking }: { booking: ShopStaffBooking }) {
   return (
     <div className="text-sm">
       <p className="text-lg font-semibold">{booking.name}</p>
@@ -51,6 +51,8 @@ export function BookingDetails({ booking }: { booking: AdminBooking }) {
         {booking.phone ? formatLebanesePhone(booking.phone) : 'No phone'}
       </p>
       {booking.customerEmail && <p className="break-all text-muted">{booking.customerEmail}</p>}
+      {!booking.customerEmail && <p className="text-muted">Walk-in or phone booking</p>}
+      {booking.anyBarber && <p className="text-muted">Booked with "Any barber"</p>}
       <p className="text-muted">
         Code <span className="caps font-semibold tracking-[0.15em] text-ink">{booking.bookingCode}</span>
       </p>
