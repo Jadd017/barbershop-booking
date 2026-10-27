@@ -26,9 +26,15 @@ describe('deployRefusal', () => {
     expect(deployRefusal('sassine', 'sassine-maatouk', ALIASES)).toBeNull();
   });
 
-  it('this branch has no shops yet, so nothing can be deployed', () => {
+  it("this branch's .firebaserc has only sassine, which deploys to its own project and nowhere else", () => {
     const aliases = shopAliases();
-    expect(aliases).toEqual({});
-    expect(deployRefusal('sassine', undefined, aliases)).toMatch(/shops: none yet/);
+    expect(aliases).toEqual({ sassine: 'sassine-barbershop' });
+    expect(deployRefusal('sassine', undefined, aliases)).toBeNull();
+    expect(deployRefusal('sassine', 'sassine-barbershop', aliases)).toBeNull();
+    expect(deployRefusal('sassine', 'other-project', aliases)).toMatch(/but this deploy goes to/);
+    expect(deployRefusal('sassine', 'eddy-barbershop', aliases)).toMatch(/locked/);
+    expect(deployRefusal('eddy', undefined, aliases)).toMatch(/locked|not a shop/);
+    expect(deployRefusal('eddy-barbershop', undefined, aliases)).toMatch(/locked/);
+    expect(deployRefusal('default', undefined, aliases)).toMatch(/not a shop/);
   });
 });

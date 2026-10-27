@@ -1,3 +1,5 @@
 {
-  "projects": {}
+  "projects": {
+    "sassine": "sassine-barbershop"
+  }
 }
