@@ -31,6 +31,12 @@ dist-ssr
 !.env.production
 # Emulator-only dummy values (demo-barbershop).
 !.env.emulator
+# Each shop's config: its Firebase web config (public by design), name and site address. Its
+# .env.local (App Check debug token) stays ignored by *.local above.
+!shops/*/.env
+
+# Written by `npm run deploy -- <shop>` for the deploy, then deleted.
+firebase.*.json
 
 # Admin service account keys belong outside the project (docs/ARCHITECTURE.md, 9.1).
 # Ignored here anyway, in case one is saved in the wrong place.

@@ -15,6 +15,9 @@ import {
   type User,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, Timestamp, type Firestore } from 'firebase/firestore';
+import { deleteApp as deleteAdminApp, initializeApp as initializeAdminApp } from 'firebase-admin/app';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SHOP_TIME_ZONE } from '../src/config';
@@ -605,6 +608,44 @@ describe('staff logins (Auth emulator)', () => {
         accounts.subscribeMyStaff(staff({ uid: user.uid, username: login.username }), user.uid, ok, fail),
       );
       expect(me).toMatchObject({ barberId: login.barberId, role: login.role, active: true });
+    }
+  });
+
+  it('setting up a new shop (npm run setup-shop): its owner signs in, the rules accept it, customers book him', async () => {
+    await env.clearFirestore();
+    const setup = await import('../scripts/shopSetup');
+    // The Admin SDK finds the emulators through FIRESTORE_EMULATOR_HOST / FIREBASE_AUTH_EMULATOR_HOST.
+    const admin = initializeAdminApp({ projectId: 'demo-barbershop' }, `setup-${Date.now()}`);
+    try {
+      const db = getAdminFirestore(admin);
+      const input = { shopName: 'Sassine Maatouk', ownerName: 'Sassine Maatouk', username: ' Sassine ', whatsapp: '71 000 000', logo: null };
+      const plan = await setup.planSetup(db, input);
+      expect(plan.problems).toEqual([]);
+      expect(plan.barber.id).toBe('sassine-maatouk');
+      expect(plan.shop.whatsapp).toBe('+96171000000');
+      const uid = await setup.applySetup(db, getAdminAuth(admin), plan, 'owner-pass-1');
+
+      // Once only.
+      expect((await setup.planSetup(db, input)).problems).toEqual(
+        expect.arrayContaining([expect.stringMatching(/already set up/), expect.stringMatching(/already has an owner/), expect.stringMatching(/already taken/)]),
+      );
+
+      const user = await accounts.signInStaff(anyone(), newAuth(), 'sassine', 'owner-pass-1');
+      expect(user.uid).toBe(uid);
+      const me = await first((ok, fail) => accounts.subscribeMyStaff(staff({ uid, username: 'sassine' }), uid, ok, fail));
+      expect(me).toMatchObject({ role: 'owner', barberId: 'sassine-maatouk', active: true });
+
+      // What it wrote is what the app and the rules expect: the owner saves the shop and adds a
+      // barber, and a customer books the owner.
+      const sassine = staff({ uid, username: 'sassine' });
+      const shop = await first<ShopSettings | null>((ok, fail) => shopApi.subscribeShop(anyone(), ok, fail));
+      await shopApi.saveShop(sassine, { ...shop!, shopName: 'Sassine' });
+      await shopApi.addBarber(sassine, makeBarber('karim', 1));
+      await expect(
+        bookings.createBooking(customer(RAMI), request({ barberId: 'sassine-maatouk' })),
+      ).resolves.toMatchObject({ barberName: 'Sassine Maatouk' });
+    } finally {
+      await deleteAdminApp(admin);
     }
   });
 

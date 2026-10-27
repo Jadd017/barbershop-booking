@@ -145,12 +145,22 @@ Reloading a page while the emulators are busy can sit on "Loading…" for a few 
 emulator speaks HTTP/1.1, so the browser queues the new page's connections behind the old one's.
 Real Firestore uses HTTP/2 and doesn't do this.
 
-Safety (details in ARCHITECTURE.md, 3.2): `.firebaserc` has no projects (so `firebase deploy`
-says "No active project"); `npm run deploy -- <shop>` refuses without a named shop from
-`.firebaserc`; every `firebase deploy` runs `scripts/deploy-guard.mjs` first, which refuses
-anything not started by `npm run deploy` and always refuses `eddy-barbershop` (LOCKED_PROJECTS in
-`scripts/deployTargets.mjs`); Vite refuses to run with a non-`demo-` project; and the app refuses
-to start if the emulator setting and the project ID don't match.
+Safety (details in ARCHITECTURE.md, 3.2): `.firebaserc` holds shop aliases only, never
+`default` or Eddy's; `npm run deploy -- <shop>` refuses without a named, complete shop, shows its
+project and asks you to type the project ID, and runs every test before building; every
+`firebase deploy` runs `scripts/deploy-guard.mjs` first, which refuses anything not started by
+`npm run deploy` for that shop's own project and always refuses `eddy-barbershop`
+(LOCKED_PROJECTS in `scripts/deployTargets.mjs`); Vite refuses a real project outside a shop's
+own mode (`--mode <shop>`); and the app refuses to start if the emulator setting and the project
+ID don't match.
+
+### Shops
+
+Each real shop is a folder `shops/<shop>/` (`.env` with its Firebase web config, first name and
+site address; `logo.png`) plus an alias in `.firebaserc`. `npm run new-shop` starts one from
+`shops/_template/`, `npm run setup-shop` sets up its Firestore and owner once, and
+`npm run deploy -- <shop>` deploys it. Step by step: README, "Adding a new shop".
+`npx vite build --mode <shop>` builds a shop's site without deploying it (into `dist/`).
 
 ## Structure
 
@@ -268,23 +278,25 @@ firebase deploy --only firestore:rules
 ## Deploy (Firebase Hosting)
 
 ```bash
-npm run deploy   # production build, then firebase deploy --only hosting,firestore:rules
+npm run deploy -- <shop>   # confirm the project, run every test, build, deploy (README, "Adding a new shop")
 ```
 
-The site is served from `dist` at https://eddy-barbershop.web.app. Every path (`/admin`,
-`/my-bookings`, …) falls back to `index.html` so the router handles it. The Firestore rules go
-out in the same command so they always match the code.
+Each shop's site is served from `dist` at its own address (e.g. https://sassine-maatouk.web.app).
+Every path (`/admin`, `/my-bookings`, …) falls back to `index.html` so the router handles it.
+The site, the Firestore rules and the indexes go out in the same command so they always match
+the code.
 
-- **Auth domain:** `.env.production` sets `VITE_FIREBASE_AUTH_DOMAIN=eddy-barbershop.web.app` for
-  builds, overriding `.env.local`. Google's redirect sign-in then stays on the site's own domain,
-  which mobile browsers need. `npm run dev` keeps the `.env.local` value.
+- **Auth domain:** each shop's `VITE_FIREBASE_AUTH_DOMAIN` (in `shops/<shop>/.env`) is the
+  domain its site is served from, so Google's redirect sign-in stays on the site's own domain,
+  which mobile browsers need.
 - **Caching:** files in `/assets` have a content hash in their name, so they're cached for a year.
   `index.html`, the app's routes and the favicon are sent with `no-cache` (always revalidated),
   so the next visit after a deploy loads the new version.
 
 - **Security headers** (`firebase.json`, every path): a Content-Security-Policy that allows only
-  this site's own scripts plus Google's sign-in helper (`apis.google.com`) and reCAPTCHA, and
-  only Firebase's APIs for requests; `frame-ancestors 'self'` and `X-Frame-Options` so other
+  this site's own scripts plus Google's sign-in helper (`apis.google.com`) and reCAPTCHA, frames
+  only from the shop's own sign-in domains (`__AUTH_DOMAIN__` and `__PROJECT_ID__` in
+  `firebase.json`, filled in per shop by the deploy), and only Firebase's APIs for requests; `frame-ancestors 'self'` and `X-Frame-Options` so other
   sites can't frame the page; `nosniff`, `Referrer-Policy`, HSTS and a `Permissions-Policy`.
   Hosting doesn't add them to its own `/__/auth/*` pages, so they can't break Google sign-in.
   If something new is blocked, the browser console says which directive to extend.

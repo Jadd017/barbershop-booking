@@ -108,28 +108,155 @@ cancelling, every settings check, who can read what, and the rules-limit margins
 ## Running locally
 
 Requirements: Node.js 22+, the [Firebase CLI](https://firebase.google.com/docs/cli)
-(`npm i -g firebase-tools`), and Java 21+ for the emulator.
+(`npm i -g firebase-tools`), and Java 21+ for the emulators. Everything runs against the local
+Firebase emulators (project `demo-barbershop`), never a real project:
 
-1. Create a Firebase project with Firestore, and enable **Google** and **Email/Password**
-   sign-in under Authentication.
-2. Copy `.env.example` to `.env.local` and fill in your project's web app config and the
-   barber's WhatsApp number (`.env.local` is git-ignored). For production builds, also set
-   `VITE_FIREBASE_AUTH_DOMAIN` in `.env.production` to the domain you host the site on.
-3. Create the barber's email/password user and put its UID in `ADMIN_UID` in `src/config.ts`
-   and in `isAdmin()` in `firestore.rules`.
-4. Install and run:
+```bash
+npm install
+npm run emu       # terminal 1: Auth + Firestore emulators
+npm run seed      # terminal 2: a demo shop: owner "tony" + 5 barbers, password "password1"
+npm run dev       # http://localhost:5173 (customers), /admin (staff)
+```
 
-   ```bash
-   npm install
-   firebase use --add            # pick your project
-   firebase deploy --only firestore:rules
-   npm run dev                   # http://localhost:5173
-   ```
+Details, and click-through checklists for customers, barbers and the owner, are in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-5. Sign in at `/admin` once: that creates the default settings, and the booking page opens.
+## Adding a new shop
 
-App Check is optional and off until `VITE_RECAPTCHA_ENTERPRISE_KEY` is set. Setup, deployment
-and the details of every rule are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Each shop is its own free (Spark) Firebase project, with the same code and the same security
+rules. In this repository a shop is a folder `shops/<shop>/` (its `.env` and `logo.png`) plus an
+alias in `.firebaserc`. The example below adds **sassine** in a project called
+`sassine-maatouk`; use your own names. Eddy's project (`eddy-barbershop`) is locked until its
+migration: every command here refuses it.
+
+You need the Firebase CLI signed in with the Google account that will own the project
+(`firebase login`), and Java 21+ (the deploy runs the emulator tests first).
+
+### 1. Create the Firebase project
+
+1. [console.firebase.google.com](https://console.firebase.google.com) → **Create a project**.
+   Name it (e.g. "Sassine Maatouk"), and note the **project ID** it gets (e.g.
+   `sassine-maatouk`). Google Analytics isn't needed. The project stays on the free Spark plan:
+   nothing here needs billing.
+2. **Project settings → General → Your apps → Web (`</>`)**: register a web app (any nickname;
+   no need to tick Hosting there). Keep the `firebaseConfig` it shows for step 3.
+3. **Build → Firestore Database → Create database**: production mode, and a location close to
+   Lebanon (e.g. `eur3 (europe-west)`). The location can't be changed later.
+4. **Build → Hosting → Get started**: click through (the deploy uploads the site).
+
+### 2. Sign-in: providers, domains, Google
+
+1. **Build → Authentication → Get started → Sign-in method**, enable:
+   - **Email/Password** (not "Email link"): staff log in with it (a username on top).
+   - **Google**: customers sign in with it. Set the public-facing name to the shop's name and
+     pick the support email.
+2. **Authentication → Settings**:
+   - **User actions**: keep **Enable create (sign-up)** on. The owner creates barbers' logins
+     from the dashboard with it; a login without a staff record gets no access.
+   - **Authorized domains**: `localhost`, `<project-id>.firebaseapp.com` and
+     `<project-id>.web.app` are there already. Add the shop's own domain if it has one.
+3. Google's OAuth client, at [console.cloud.google.com](https://console.cloud.google.com) with
+   the same project selected:
+   - **APIs & Services → OAuth consent screen** (Google Auth Platform → Branding / Audience):
+     app name = the shop's name, support email; under **Audience**, **Publish app** (in
+     testing, only listed test users could sign in).
+   - **APIs & Services → Credentials → OAuth 2.0 Client IDs → Web client (auto created by Google
+     Service)**:
+     - **Authorized JavaScript origins**: `https://<project-id>.web.app`,
+       `https://<project-id>.firebaseapp.com`, and `https://<the shop's domain>` if any.
+     - **Authorized redirect URIs**: the same addresses followed by `/__/auth/handler`, e.g.
+       `https://sassine-maatouk.web.app/__/auth/handler`.
+
+### 3. The shop's config in this repository
+
+```bash
+npm run new-shop -- sassine sassine-maatouk "Sassine Maatouk"
+```
+
+This creates `shops/sassine/.env` from `shops/_template/.env` and adds the alias
+`sassine → sassine-maatouk` to `.firebaserc`. Then:
+
+- In `shops/sassine/.env`, fill in every value still in `<angle brackets>` from the web app's
+  config (step 1.2). `VITE_FIREBASE_AUTH_DOMAIN` and `VITE_SITE_URL` are the address customers
+  open: `sassine-maatouk.web.app`, or the shop's own domain once it's connected.
+  `VITE_SHOP_NAME` is the name the shop starts with (the owner changes it later in Settings →
+  Shop) and the one link previews show.
+- Add the shop's logo as `shops/sassine/logo.png`: the link-preview image (WhatsApp, Instagram),
+  and the first logo if it's under 100 KB (otherwise the owner uploads it from the dashboard,
+  which shrinks it).
+- Commit both. The Firebase web config is public by design; the security rules protect the data.
+
+### 4. The admin key (only for the setup, then deleted)
+
+The one-time setup writes what nobody can write from the site yet (there's no owner), so it uses
+the project's admin key:
+
+1. Firebase console → **Project settings → Service accounts → Generate new private key**.
+2. Save the file **outside this folder**, e.g. `C:\Users\<you>\firebase-keys\sassine-maatouk.json`.
+   The setup refuses a key inside the project folder; never commit or send it (it gives full
+   access to the project).
+
+### 5. Set up the shop and its owner
+
+Rehearse on the emulators first if you like (`npm run emu` running):
+
+```bash
+npm run setup-shop -- sassine --emulator --username sassine --owner-name "Sassine Maatouk" --write
+```
+
+Then for real. First a **dry run**: it reads the project and lists what it would create, and
+writes nothing:
+
+```bash
+npm run setup-shop -- sassine --key C:\Users\<you>\firebase-keys\sassine-maatouk.json --username sassine --owner-name "Sassine Maatouk" --whatsapp "71 123 456"
+```
+
+If it looks right, run the same with `--write`. It asks for the owner's password twice (hidden;
+at least 8 characters) and for the project ID to confirm, then creates:
+
+- the shop settings: its name, the default services (Haircut 30 min $10, Beard 15 min $5,
+  Haircut + Beard 45 min $13), opening hours 10:00–20:00 every day, a 4-day booking window, and
+  the WhatsApp number if given;
+- the logo and default colors;
+- the owner as a barber, working the shop's hours;
+- the owner's login: username `sassine` with that password.
+
+It runs once: it refuses a project that already has shop settings or an owner.
+
+### 6. Delete the admin key
+
+[console.cloud.google.com](https://console.cloud.google.com) → **IAM & Admin → Service
+accounts** → `firebase-adminsdk-…@sassine-maatouk.iam.gserviceaccount.com` → **Keys** → delete
+the key (its ID is `private_key_id` in the file). A deleted key stops working at once. Then
+delete the file. Generate a new one if it's ever needed again.
+
+### 7. Deploy
+
+```bash
+npm run deploy -- sassine
+```
+
+It refuses without a shop name, for a shop that isn't complete, and for a locked project. It
+shows the shop and the **Firebase project** it will deploy to and asks you to type the project
+ID. Then it runs lint, the unit tests and the emulator tests (stopping at the first failure,
+before anything is deployed), builds the site with the shop's config, and deploys the site,
+security rules and indexes together. `npm run deploy -- sassine --dry-run` shows all of that
+without running it.
+
+If `npm run emu` is running, the tests run on those emulators and wipe their data
+(`npm run seed` brings the demo shop back).
+
+### 8. First login
+
+Open `https://sassine-maatouk.web.app/admin` and log in with the owner's username and
+password. In **Settings → Shop**: the WhatsApp number (customers send their bookings to it),
+opening hours, closed days, services and prices, address and Maps link, logo and colors. In
+**Barbers**: add each barber with his username and a first password.
+
+Later, deploy changes the same way: `npm run deploy -- sassine`. App Check (optional) is in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md); its site key goes in `VITE_RECAPTCHA_ENTERPRISE_KEY`.
+A custom domain later: connect it in Hosting, add it to Authorized domains and the OAuth client
+(step 2), set it in `VITE_FIREBASE_AUTH_DOMAIN` and `VITE_SITE_URL`, and redeploy.
 
 ## License
 

@@ -21,7 +21,7 @@ export function shopAliases(rcText = readFileSync('.firebaserc', 'utf8')) {
  * `project`, and the project must not be locked.
  */
 export function deployRefusal(shop, project, aliases) {
-  if (!shop) return 'name the shop: npm run deploy -- <shop> (see docs/ARCHITECTURE.md, 3.3).';
+  if (!shop) return 'name the shop: npm run deploy -- <shop> (README, "Adding a new shop").';
   if (shop === 'default') return '"default" is not a shop. Name the shop explicitly.';
   if (LOCKED_PROJECTS.includes(shop) || LOCKED_PROJECTS.includes(project)) {
     return `${project ?? shop} is locked on this branch (Eddy's live site). See LOCKED_PROJECTS in scripts/deployTargets.mjs.`;

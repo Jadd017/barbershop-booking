@@ -1,6 +1,6 @@
 # Multi-barber, multi-shop: architecture plan
 
-Status: **Phases 0–6 done; Phases 7–9 not started.** Every page uses the new data layer. `/admin` is the staff dashboard: barbers see their own day and settings, the owner every barber, the barbers pages and the shop's settings. Branch `multi-barber`. Until told otherwise,
+Status: **Phases 0–7 done; Phases 8–9 not started.** Every page uses the new data layer. `/admin` is the staff dashboard: barbers see their own day and settings, the owner every barber, the barbers pages and the shop's settings. Branch `multi-barber`. Until told otherwise,
 everything on this branch runs against the Firebase emulator only. Eddy's live site (`main`,
 project `eddy-barbershop`) is not touched.
 
@@ -51,26 +51,30 @@ pays for reading the barber's schedule.
 
 | File | Committed | Contents |
 |---|---|---|
-| `.env.emulator` | yes | `VITE_USE_EMULATOR=true`, project ID `demo-barbershop`, dummy values (Phase 0) |
-| `.env.eddy`, `.env.sassine` | yes (Phase 7) | Firebase web config (public by design), `VITE_SHOP_NAME`, `VITE_SITE_URL`, auth domain, reCAPTCHA site key (public) |
-| `shops/<shop>/logo.png` | yes (Phase 7) | initial logo, and the link-preview image |
-| `.env.<shop>.local` | no (gitignored) | App Check debug token for local dev |
-| `.firebaserc` | yes | **empty on this branch until Phase 7** (the CLI picks a lone alias even without `default`), then aliases only (`eddy → eddy-barbershop`, `sassine → …`), never `default` |
-| `firebase.template.json` | yes (Phase 7) | today's `firebase.json` with the shop's domains as placeholders |
+| `.env.emulator` | yes | `VITE_USE_EMULATOR=true`, project ID `demo-barbershop`, dummy values, `VITE_SHOP_NAME` (Phase 0) |
+| `shops/<shop>/.env` | yes | Firebase web config (public by design), auth domain, reCAPTCHA site key (public), `VITE_SHOP_NAME` (first name), `VITE_SITE_URL` |
+| `shops/<shop>/logo.png` | yes | first logo (if under 100 KB), and the link-preview image |
+| `shops/<shop>/.env.local` | no (`*.local`) | App Check debug token for local dev |
+| `shops/_template/.env` | yes | what `npm run new-shop` copies |
+| `.firebaserc` | yes | aliases only (`sassine → sassine-maatouk`, later `eddy → eddy-barbershop`), never `default`; empty until the first shop |
+| `firebase.json` | yes | emulators, rules, hosting; its CSP `frame-src` has `__AUTH_DOMAIN__` and `__PROJECT_ID__` placeholders |
+| `firebase.<shop>.json` | no (written for a deploy, then deleted) | `firebase.json` with the shop's domains filled in, without the emulator settings |
 
-Vite loads `.env.[mode]` automatically, so `vite --mode sassine` builds Sassine's site and
-`vite --mode emulator` builds against the emulator.
+`vite --mode <shop>` uses `shops/<shop>/` as its env folder (`envDir`), so a shop's build reads
+only its own config, never the root `.env.local` (Eddy's live config). `vite --mode emulator`
+(`npm run dev`, `npm run build`) uses the root `.env.emulator`.
 
 **The per-shop config only holds the initial shop name and logo** (plus the Firebase settings):
 
-- They are copied into Firestore (`settings/shop.shopName`, `settings/branding.logo`) the first
-  time the owner opens the dashboard of a new shop. After that, Firestore is what the site shows,
-  and the owner changes them from Settings.
+- They are copied into Firestore (`settings/shop.shopName`, `settings/branding.logo`) by the
+  one-time setup (`npm run setup-shop`, 3.4), or, for a shop set up by hand, the first time the
+  owner opens the dashboard (with no logo). After that, Firestore is what the site shows, and the
+  owner changes them from Settings.
 - They are also used for the **link preview** when someone shares the site (WhatsApp, Instagram,
-  Facebook). Those apps don't run JavaScript, so the build writes `og:title`, `og:description`
-  and `og:image` (the config logo, copied to `/og-image.png`) into `index.html`. Changing the
-  preview therefore means changing the config file and redeploying; the owner's in-app changes
-  don't reach it.
+  Facebook). Those apps don't run JavaScript, so the build writes the title, `og:title`,
+  `og:description`, `og:url` and `og:image` (the config logo, copied to `/og-image.png`) into
+  `index.html`. Changing the preview therefore means changing the config and redeploying; the
+  owner's in-app changes don't reach it.
 
 The WhatsApp number moves out of `.env` into `settings/shop` (the owner edits it). It is public
 anyway: it's in every wa.me link.
@@ -82,23 +86,26 @@ anyway: it's in every wa.me link.
 - `src/data/firebase.ts`: when `VITE_USE_EMULATOR` is set, it connects to the Firestore and Auth
   emulators, skips App Check, and **refuses to start unless the project ID starts with `demo-`**.
 - `vite.config.ts` refuses to run (dev or build) with any project ID that doesn't start with
-  `demo-`, so `.env.local`'s real Eddy config can't be used from this branch by accident. Phase 7
-  adds the shop modes to an explicit allow-list.
+  `demo-`, so `.env.local`'s real Eddy config can't be used from this branch by accident, except
+  in a shop's own mode (`--mode <shop>`, a folder in `shops/`), which reads only that shop's
+  config and refuses an incomplete one (Phase 7).
 - `firebase.json` gains the Auth emulator (port 9099), needed for staff logins and the fake Google
   sign-in popup.
 - Deploying to Eddy's live project from this branch is blocked at three levels:
-  1. `.firebaserc` has no projects at all on this branch (no `default`, no `eddy` alias) and the
-     CLI's remembered project for this folder was cleared (`firebase use --clear`), so a bare
-     `firebase deploy` stops with "No active project".
+  1. `.firebaserc` has no `default` and no `eddy` alias on this branch, and the CLI's remembered
+     project for this folder was cleared (`firebase use --clear`). Until the first shop is added it
+     has no projects at all, so a bare `firebase deploy` stops with "No active project"; once it
+     has one alias the CLI may pick it, which the guard (3.) refuses.
   2. `npm run deploy -- <shop>` (`scripts/deploy.mjs`) refuses unless a shop is named, is an alias
-     in `.firebaserc` (not `default`), has a `.env.<shop>`, and isn't locked.
+     in `.firebaserc` (not `default`), has a complete `shops/<shop>/` config for that project, and
+     isn't locked; then it asks you to type the project ID (3.3).
   3. `firebase.json` runs `scripts/deploy-guard.mjs` as a **predeploy hook** for both the rules and
      hosting, so it runs before anything is uploaded, whichever way the deploy was started (even
      `firebase deploy --project eddy-barbershop` typed by hand). It refuses unless `npm run deploy`
      started it for a named shop whose alias is the project Firebase is deploying to, and always
      refuses the projects in `LOCKED_PROJECTS` (`scripts/deployTargets.mjs`): `eddy-barbershop`,
      until the deliberate commit that migrates Eddy (9.3).
-  On top of that, Vite refuses to build with any non-`demo-` project until Phase 7's allow-list.
+  On top of that, `npm run new-shop` and `npm run setup-shop` refuse locked projects too.
 - Scripts:
   - `npm run emu` – start Auth + Firestore emulators for `demo-barbershop`
   - `npm run dev` – the site at http://localhost:5173, against the emulator
@@ -107,36 +114,52 @@ anyway: it's in every wa.me link.
     the emulator
   - `npm run seed` – demo shop in the emulator (owner + 5 barbers with logins, services,
     bookings today and on the next open day), Phases 3 and 5
+  - `npm run new-shop`, `npm run setup-shop`, `npm run deploy` – a shop's config, its one-time
+    setup, and its deploys (3.3, 3.4; README, "Adding a new shop"), Phase 7
 
-### 3.3 Build and deploy (Phase 7, used only when you say so)
+### 3.3 Build and deploy (Phase 7)
 
-`npm run deploy -- <shop>` (`scripts/deploy.mjs`, with the guard above, added before Phase 4):
+`npm run deploy -- <shop> [--dry-run]` (`scripts/deploy.mjs`):
 
-1. Refuses unless `<shop>` is named, is an alias in `.firebaserc` and `.env.<shop>` exists, and its
-   project isn't in `LOCKED_PROJECTS` (protects Eddy until migration day).
-2. `--dry-run` prints what it would do. Phase 7 adds the steps below.
-3. Writes `firebase.<shop>.json` from `firebase.template.json` (fills the shop's domains into
-   the CSP `frame-src`).
-4. Runs `vite build --mode <shop>` then
-   `firebase deploy --project <shop> --config firebase.<shop>.json --only hosting,firestore:rules,firestore:indexes`.
-5. `--dry-run` prints the generated config and the commands without running them.
-6. Inside Firebase, the predeploy guard checks the same again.
+1. Refuses unless `<shop>` is named, is an alias in `.firebaserc`, its project isn't in
+   `LOCKED_PROJECTS` (Eddy until migration day), and `shops/<shop>/` is complete
+   (`scripts/shops.mjs`: every value filled in, a real project that matches the alias, an https
+   site address, the logo).
+2. Shows the shop, the Firebase project, the site, and every step. `--dry-run` stops here (and
+   shows the generated CSP).
+3. Asks you to type the project ID; anything else stops it. Without a terminal it refuses.
+4. Runs `npm run lint`, `npm test` and the emulator tests (`npm run test:emu`, or straight on the
+   emulators if `npm run emu` is running); stops at the first failure, before anything is built
+   or deployed.
+5. Type-checks and runs `vite build --mode <shop>`.
+6. Writes `firebase.<shop>.json` (3.1), runs
+   `firebase deploy --project <project> --config firebase.<shop>.json --only hosting,firestore`
+   (site, rules and indexes together) with `DEPLOY_SHOP=<shop>`, and deletes the file.
+7. Inside Firebase, the predeploy guard checks the shop and project again (3.2).
 
 `firestore.rules` is **identical for every shop**: no UIDs or shop data are hard-coded in it any
 more (today's `ADMIN_UID` goes away, staff come from `staff/{uid}`). Composite indexes
 (`firestore.indexes.json`) are free on Spark.
 
-### 3.4 New shop checklist (Sassine)
+### 3.4 New shop
 
-1. Firebase console: create project (Spark), add a web app, enable Auth providers
-   **Email/Password** and **Google**, create Firestore, add the hosting domain to Authorized
-   domains.
-2. Add `.env.sassine`, `shops/sassine/logo.png` and the `.firebaserc` alias; run
-   `npm run deploy sassine`.
-3. Bootstrap the first owner (section 5.5).
-4. Owner signs in (name and logo are seeded from the config), fills in shop settings, adds
-   barbers and their logins.
-5. Optional: App Check exactly as in `docs/DEVELOPMENT.md`, with the new project's own key.
+Step by step in the README, "Adding a new shop". In short: create the Firebase project (Spark)
+with a web app, Firestore and Hosting; enable **Email/Password** and **Google** sign-in; check
+Authorized domains, publish the OAuth consent screen and set the OAuth client's origins and
+redirect URIs; `npm run new-shop -- <shop> <project-id> "<name>"`, fill in `shops/<shop>/.env`
+and add its logo; generate the admin key outside the project; `npm run setup-shop` (dry run,
+then `--write`); delete the key; `npm run deploy -- <shop>`; the owner logs in and fills in the
+shop's settings and barbers.
+
+`npm run setup-shop -- <shop> --key <file> --username <u> --owner-name "<name>" [--whatsapp <n>]
+[--write]` (`scripts/setup-shop.mjs`, logic in `scripts/shopSetup.ts`) does section 5.5 with the
+Admin SDK: `settings/shop` (first name, default services and hours, WhatsApp if given),
+`settings/branding` (the config logo if under 100 KB, default colors), `barbers/{id}` for the
+owner, and his login (Auth user, `staff/{uid}` as owner, `usernames/{u}`). It's a dry run unless
+`--write`, which asks for the password twice (hidden, never on the command line) and the project
+ID. It refuses a key inside the project folder, a key for another project than the shop's alias,
+a locked project, and a project that already has shop settings, an owner, or that username.
+`--emulator` rehearses it on the emulators.
 
 ## 4. Data model
 
@@ -538,7 +561,7 @@ have no `slots` docs (re-created by a small rollback script if ever needed).
 
 | Risk | Mitigation |
 |---|---|
-| Accidentally deploying this branch to Eddy's project, or using his data | No `default` alias; `npm run deploy` disabled until Phase 7; Vite refuses non-`demo-` projects; emulator guard in `firebase.ts` |
+| Accidentally deploying this branch to Eddy's project, or using his data | No `default` or `eddy` alias; `eddy-barbershop` in `LOCKED_PROJECTS` (deploy, predeploy guard, new-shop, setup-shop); deploys only through `npm run deploy` with the project ID typed; Vite refuses real projects outside a shop's own mode; emulator guard in `firebase.ts` |
 | Rules cost creeps over the limit as features are added | Measured budgets (bookings: 5/10 reads, ~650/1000 expressions; staff writes ≥ 20% spare), enforced by tests on every run |
 | Day doc contention (many bookings for one barber at once) | Firestore handles ~1 write/sec per doc; a shop's peak is far below. Transactions retry automatically |
 | "Fewest bookings" not enforced server-side | Acceptable by design (7.3) |
@@ -649,11 +672,22 @@ Pure logic in `lib/team.ts`. The first owner sign-in on a new shop creates setti
 `VITE_SHOP_NAME`. The seed adds a booking for Fadi to move when deactivating him. Checklist:
 `docs/DEVELOPMENT.md`, "Owner dashboard on the emulator".
 
-**Phase 7 – Per-shop build and deploy pipeline**
+**Phase 7 – Per-shop build and deploy pipeline** ✅
 `.env.eddy`, `.env.sassine`, `shops/<shop>/logo.png`, link-preview tags, `firebase.template.json`,
 `scripts/deploy.mjs` with `--dry-run`, Vite allow-list for shop modes, operator docs.
 *Test:* `npm run build -- --mode sassine` and `--mode eddy` succeed with the right project IDs and
 `og:` tags; `node scripts/deploy.mjs sassine --dry-run` prints the config and commands only.
+Done as: one folder per shop (`shops/<shop>/.env` + `logo.png`) instead of `.env.<shop>` at the
+root, so a shop's build reads nothing else; `firebase.json` itself holds the CSP placeholders
+instead of a separate template; plus `npm run new-shop` (from `shops/_template/`), the confirmed
+and tested deploy (3.3), and `npm run setup-shop` (3.4, with `firebase-admin`), and the README's
+"Adding a new shop". No shop folder is committed yet: Sassine's needs its project's web config
+(Phase 9), Eddy's comes with his migration (Phase 8). Tested with `scripts/shops.test.ts`
+(config checks, the per-shop CSP), the emulator test of the setup in `rules-tests/data.test.ts`
+(the owner signs in, saves the shop, a customer books him), and by hand with a throwaway shop:
+its build has the shop's title, preview tags, `og-image.png` and only its project; the deploy
+and setup refuse no shop, a locked or mismatched project, an incomplete config, an in-project
+key, and running without a terminal.
 
 **Phase 8 – Admin scripts and Eddy migration**
 `scripts/backup.mjs`, `scripts/migrate-eddy.mjs` (dry run by default, `--write` + typed
