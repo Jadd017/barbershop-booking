@@ -3,6 +3,7 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
+import { envLeakProblems, shopDirFiles } from './scripts/deployChecks.mjs'
 import { listShops, readShop, shopProblems } from './scripts/shops.mjs'
 
 /** HTML-escapes a value for an attribute or the title. */
@@ -41,7 +42,7 @@ function shopPreview(env: Record<string, string>, logoPath: string): Plugin {
 }
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const plugins = [react(), tailwindcss()]
 
   // `--mode <shop>`: one shop's site against its own Firebase project, from shops/<shop>/ only, so
@@ -50,6 +51,13 @@ export default defineConfig(({ mode }) => {
     const shop = readShop(mode)
     const problems = shopProblems(mode, shop)
     if (problems.length) throw new Error(`Shop "${mode}" isn't ready:\n- ${problems.join('\n- ')}`)
+    // A shop's site is built from shops/<shop>/.env alone: no VITE_ variables from the shell, and
+    // no .env.local (the App Check debug token) or .env.<mode> next to it.
+    const leaks =
+      command === 'build'
+        ? envLeakProblems({ processEnv: process.env, shopDir: shop.dir, shopDirFiles: shopDirFiles('.', mode) })
+        : []
+    if (leaks.length) throw new Error(`Not building ${mode}:\n- ${leaks.join('\n- ')}`)
     const env = loadEnv(mode, shop.dir, 'VITE_')
     return { plugins: [...plugins, shopPreview(env, shop.logoPath)], envDir: shop.dir }
   }
