@@ -1,5 +1,6 @@
 import { Brush, Clock, Scissors, Sparkles, type LucideIcon } from 'lucide-react';
-import { formatPrice } from '../lib/shop';
+import { useTranslation } from 'react-i18next';
+import { formatPrice, localServiceName } from '../lib/shop';
 import type { Service } from '../types';
 
 interface Props {
@@ -18,6 +19,7 @@ function serviceIcon(name: string): LucideIcon {
 }
 
 export function ServicePicker({ services, selectedId, onSelect }: Props) {
+  const { t } = useTranslation();
   return (
     <div className="grid gap-2">
       {services.map((service) => {
@@ -29,7 +31,7 @@ export function ServicePicker({ services, selectedId, onSelect }: Props) {
             type="button"
             onClick={() => onSelect(service.id)}
             aria-pressed={selected}
-            className={`flex min-h-16 items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+            className={`flex min-h-16 items-center gap-3 rounded-2xl border px-4 py-3 text-start transition ${
               selected
                 ? 'border-charcoal bg-charcoal text-cream shadow-md'
                 : 'border-line bg-card text-ink hover:border-muted'
@@ -44,12 +46,12 @@ export function ServicePicker({ services, selectedId, onSelect }: Props) {
               <Icon size={20} strokeWidth={1.75} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block font-semibold">{service.name}</span>
+              <span className="block font-semibold">{localServiceName(service)}</span>
               <span
                 className={`flex items-center gap-1 text-sm ${selected ? 'text-line' : 'text-muted'}`}
               >
                 <Clock aria-hidden size={14} />
-                {service.durationMinutes} min
+                {t('common.minutes', { minutes: service.durationMinutes })}
               </span>
             </span>
             {service.price !== undefined && (

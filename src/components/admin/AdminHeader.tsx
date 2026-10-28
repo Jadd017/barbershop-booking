@@ -1,29 +1,49 @@
 import { LogOut } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useBranding } from '../../hooks/useShop';
+import { LanguageToggle } from '../LanguageToggle';
+import { BarberPole } from '../ui';
+import type { StaffSession } from './session';
 
 interface Props {
+  session: StaffSession;
   /** The small line above the title, e.g. the date. */
   overline?: string;
   title: string;
-  onLogout: () => void;
+  /** Spans a wide screen, for the owner's barbers side by side. */
+  wide?: boolean;
   children?: ReactNode;
 }
 
-/** The charcoal header of Eddy's pages. */
-export function AdminHeader({ overline, title, onLogout, children }: Props) {
+/** The dark header of the staff pages: the shop's logo and name, who is signed in, the page. */
+export function AdminHeader({ session, overline, title, wide = false, children }: Props) {
+  const { t } = useTranslation();
+  const logo = useBranding()?.logo ?? null;
   return (
     <header className="bg-charcoal text-cream">
-      <div className="mx-auto max-w-xl px-4 pb-5 pt-4">
-        <div className="flex items-center justify-between">
-          <p className="caps text-xs font-medium tracking-[0.3em] text-brass-light">Barbershop admin</p>
-          <button
-            type="button"
-            onClick={onLogout}
-            className="inline-flex min-h-11 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
-          >
-            <LogOut aria-hidden size={16} />
-            Log out
-          </button>
+      <BarberPole />
+      <div className={`mx-auto max-w-xl px-4 pb-5 pt-3 ${wide ? 'lg:max-w-none lg:px-8' : ''}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {logo && <img src={logo} alt="" className="h-9 w-9 shrink-0 rounded-lg object-contain" />}
+            <p className="caps min-w-0 truncate text-xs font-medium tracking-[0.25em] text-brass-light">
+              {session.shop.shopName}
+              <span className="text-line"> · </span>
+              {session.barber.name}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <LanguageToggle />
+            <button
+              type="button"
+              onClick={session.onLogout}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
+            >
+              <LogOut aria-hidden size={16} className="rtl:-scale-x-100" />
+              {t('staff.logOut')}
+            </button>
+          </div>
         </div>
         {overline && <p className="mt-2 text-sm text-line">{overline}</p>}
         <h1 className="caps text-4xl font-semibold tracking-[0.1em]">{title}</h1>

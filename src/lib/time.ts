@@ -1,3 +1,4 @@
+import { dateLocale } from '../i18n';
 import type { DateKey, TimeString } from '../types';
 
 export function timeToMinutes(time: TimeString): number {
@@ -40,13 +41,13 @@ export function upcomingDateKeys(count: number, from: Date = new Date()): DateKe
 export function formatDayShort(key: DateKey): { weekday: string; day: string } {
   const date = fromDateKey(key);
   return {
-    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-    day: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    weekday: date.toLocaleDateString(dateLocale(), { weekday: 'short' }),
+    day: date.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' }),
   };
 }
 
 export function formatDayLong(key: DateKey): string {
-  return fromDateKey(key).toLocaleDateString('en-US', {
+  return fromDateKey(key).toLocaleDateString(dateLocale(), {
     weekday: 'long',
     month: 'long',
     day: 'numeric',
@@ -76,4 +77,17 @@ export function zonedInstant(date: DateKey, time: TimeString, timeZone: string):
   // Guess with the offset at that wall-clock time, then correct once in case it crosses a DST change.
   const guess = wallClockAsUtc - utcOffsetMinutes(timeZone, new Date(wallClockAsUtc)) * 60_000;
   return new Date(wallClockAsUtc - utcOffsetMinutes(timeZone, new Date(guess)) * 60_000);
+}
+
+const DAY_MS = 86_400_000;
+
+/** Days since 1970-01-01: "1970-01-02" → 1. firestore.rules works out today's the same way. */
+export function dayNumber(date: DateKey): number {
+  const [y, m, d] = date.split('-').map(Number);
+  return Date.UTC(y, m - 1, d) / DAY_MS;
+}
+
+/** The reverse of dayNumber. */
+export function dateOfDayNumber(day: number): DateKey {
+  return new Date(day * DAY_MS).toISOString().slice(0, 10);
 }

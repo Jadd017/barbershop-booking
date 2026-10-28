@@ -3,7 +3,9 @@
  * `caps` (Oswald, uppercase) and `barber-pole` utilities are defined in index.css.
  */
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { BookingStatus } from '../types';
+import { LanguageBar } from './LanguageToggle';
 
 // Every button is at least 44px tall, so it's easy to tap.
 const button =
@@ -79,27 +81,28 @@ export function PageMessage({ children, error = false }: { children: ReactNode; 
   return (
     <div className="min-h-screen">
       <BarberPole />
-      <p className={`px-6 pt-16 text-center ${error ? 'text-pole-red' : 'text-muted-strong'}`}>
+      <LanguageBar />
+      <p className={`px-6 pt-12 text-center ${error ? 'text-pole-red' : 'text-muted-strong'}`}>
         {children}
       </p>
     </div>
   );
 }
 
-const STATUS: Record<BookingStatus, { label: string; dot: string }> = {
-  booked: { label: 'Booked', dot: 'bg-pole-blue' },
-  done: { label: 'Done', dot: 'bg-whatsapp' },
-  'no-show': { label: 'No-show', dot: 'bg-pole-red' },
-  cancelled: { label: 'Cancelled', dot: 'bg-muted' },
+const STATUS_DOTS: Record<BookingStatus, string> = {
+  booked: 'bg-pole-blue',
+  done: 'bg-whatsapp',
+  'no-show': 'bg-pole-red',
+  cancelled: 'bg-muted',
 };
 
 /** A booking's status as a colored dot plus its name (the text itself stays dark, for contrast). */
 export function StatusChip({ status, label }: { status: BookingStatus; label?: string }) {
-  const s = STATUS[status];
+  const { t } = useTranslation();
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 py-1 text-xs font-semibold text-ink">
-      <span aria-hidden className={`h-2 w-2 rounded-full ${s.dot}`} />
-      {label ?? s.label}
+      <span aria-hidden className={`h-2 w-2 rounded-full ${STATUS_DOTS[status]}`} />
+      {label ?? t(`status.${status}`)}
     </span>
   );
 }

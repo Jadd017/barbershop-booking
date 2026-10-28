@@ -16,16 +16,24 @@ export const cardClass = 'rounded-2xl border border-line bg-card p-4';
 /** Every time on the 15-min grid, 00:00 to 23:45. */
 const TIMES = Array.from({ length: (24 * 60) / SLOT_MINUTES }, (_, i) => minutesToTime(i * SLOT_MINUTES));
 
-/** A time picker limited to the 15-min grid (mobile time inputs ignore `step`). */
+/**
+ * A time picker limited to the 15-min grid (mobile time inputs ignore `step`), and to `min`–`max`
+ * when given. The current value is always offered, even outside them, so it shows as it is.
+ */
 export function TimeSelect({
   value,
   onChange,
   label,
+  min = '00:00',
+  max = '23:45',
 }: {
   value: TimeString;
   onChange: (time: TimeString) => void;
   label: string;
+  min?: TimeString;
+  max?: TimeString;
 }) {
+  const times = TIMES.filter((t) => t === value || (t >= min && t <= max));
   return (
     <select
       aria-label={label}
@@ -33,7 +41,7 @@ export function TimeSelect({
       onChange={(e) => onChange(e.target.value)}
       className={`${inputBase} min-w-0 flex-1 tabular-nums`}
     >
-      {TIMES.map((t) => (
+      {times.map((t) => (
         <option key={t} value={t}>
           {t}
         </option>

@@ -29,23 +29,162 @@ npm run dev      # http://localhost:5173
 npm run build    # type-check + production build
 ```
 
+## Development on the emulators
+
+Development and tests run against the local Firebase emulators, never a real project (plan:
+[ARCHITECTURE.md](ARCHITECTURE.md)). Eddy's single-barber site is on the `eddy-single-barber`
+branch, with its own notes. `.env.emulator` uses the emulator-only project
+`demo-barbershop`; `.env.local` is ignored there.
+
+```bash
+npm run emu       # terminal 1: Auth + Firestore emulators (needs Java 21+)
+npm run seed      # terminal 2: a demo shop in the emulators (owner "tony" and 5 barbers,
+                  #   password "password1", bookings today around the time it's run and on the
+                  #   next open day); wipes what was there. Run again after restarting emu.
+npm run dev       # http://localhost:5173 against the emulators
+npm test          # unit tests
+npm run test:emu  # rules + data-layer tests in the emulators (alias: test:rules)
+npm run build     # type-check + build, emulator config
+```
+
+### Customer flow on the emulator
+
+With `npm run emu`, `npm run seed` and `npm run dev` running, in a phone-sized window
+(browser dev tools → device toolbar, e.g. 390 × 844):
+
+1. The header says "Demo Barbershop" (also the tab title), with today's opening hours.
+2. Pick a service: the Barber step shows "Any barber" and initials cards for Tony, Karim Haddad,
+   Sami, Omar, Fadi and Elie.
+3. Pick a barber and the demo day (the next open day): times follow his hours, breaks and
+   bookings (Karim: booked 10:00–10:45 and 11:00, break 13:00–13:30; Sami starts at 12:00 and
+   is blocked 16:00–17:00; Omar is off that day, so it shows closed for him).
+4. "Any barber" shows a time if anyone is free (e.g. 12:45, where Karim and Sami can't).
+5. Pick a time: the bottom bar shows the barber. Book now → the emulator's fake Google sign-in
+   → name and phone → the confirmation names the barber ("You're booked with …" for Any barber),
+   and the WhatsApp message goes to the shop's number with the barber's name.
+6. My bookings lists it "With <barber>", and cancelling frees the time.
+
+### Staff dashboard on the emulator
+
+Same setup, at http://localhost:5173/admin. Logins (all password `password1`): `tony` (owner,
+barber Tony), `karim`, `sami`, `omar`, `fadi`, `elie`. A barber sees only his own day; the
+owner's extras are in the next checklist. Reseed to start over.
+
+1. **Login**: `karim` with a wrong password → "Wrong username or password.", then `password1`.
+   The header shows the shop name and "Karim Haddad".
+2. **Today**: stats (Bookings, Done, Free slots), "Working 10:00–20:00", an **Up next** card
+   (Maya, about 15 min after you ran the seed) with Done / No-show, Call, WhatsApp, Cancel;
+   **Later today** with a walk-in (no phone, so no Call/WhatsApp), his break and a blocked hour;
+   **Earlier today** with a done and a no-show booking; "Show cancelled (1)". Depending on the
+   time you seeded, some of these fall outside the day or in a break and are left out.
+3. Tap **Done** on Up next: it moves to Earlier today and the Done count goes up; tap it there
+   and **Undo Done**. Open a later booking and **Cancel** → "Yes, cancel": it moves under
+   cancelled, and Free slots goes up.
+4. **Calendar**: arrows and the date field show any day; the next open day has Karim's 10:00 and
+   11:00 bookings. Sunday says "The shop is closed on this day."
+5. **Walk-in**: pick a service, today: only his free times can be picked (not his break, blocked
+   or booked time). Add a name (phone optional) → it appears in his day. Add another at the same
+   time: that time is no longer offered.
+6. **Settings → My hours**: each day shows the shop's hours; times outside them aren't offered;
+   Sunday (shop closed) can't be switched on. Change Monday to end at 19:00 → Save changes. If a
+   booking falls outside the new hours, it's listed at the top and saving asks "Save anyway?".
+7. **My days off**: add the next open day → Save → the Calendar says "This is your day off", and
+   the customer page no longer offers Karim that day (its bookings are listed at the top).
+8. **Blocked times**: only times within the shop's hours are offered; pick a range over one of
+   his bookings → it's listed with Cancel; Block → it shows in the list and on Today; Unblock.
+9. **Password**: wrong current password → refused; mismatched new ones → refused; correct →
+   "Password changed". Log out; the old password fails, the new one works.
+10. **Only his own**: log in as `sami`: he sees his own booking (Samir) and none of Karim's.
+    `elie` on a Monday (Calendar): "You don't work on Mondays."
+
+### Owner dashboard on the emulator
+
+Log in as `tony` / `password1`. Use a phone-sized window, and a wide one (1400 px+) for step 2.
+Reseed to start over.
+
+1. **Today (phone)**: "Whole shop" stats on top, then a row of barber pills (initials, first name,
+   bookings). Tap **Karim**: his day with his own numbers, Up next, later and earlier today.
+2. **Today (wide window)**: every barber side by side, each column with his numbers and hours.
+3. **Acting on any barber**: on Karim's Up next tap **Done**, then **Undo Done**; open a later
+   booking and **Cancel** it.
+4. **Move**: open one of Karim's bookings → **Move**. Each other barber shows "Free", "Booked
+   then", "Blocked then" or "Not working then"; only free ones can be picked. Pick one → **Move
+   to …** → "Moved to …" and **WhatsApp <customer>** (for a booking with a phone), whose message
+   names the new barber. The booking now shows under that barber.
+5. **Walk-in for any barber**: Walk-in → pick **Sami** → service → only Sami's free times → add.
+   It shows in Sami's day; that time is gone for him, still free for others.
+6. **Barbers**: the list (in customer order) with each login. Move Sami **up** → the customer
+   page lists him earlier. **Add a barber**: name "Ziad Test" (username suggested "ziad"), first
+   password `ziadpass1` → "Ziad Test was added", and you're still logged in as Tony. Log in as
+   `ziad` later: he sees his own (empty) day.
+7. **A barber's page** (tap Karim): rename him (customers see the new name), change his hours,
+   breaks and days off (same warnings as his own settings), block time for him. **New login**:
+   new password `karimnew1` → "New login ready"; later `karim` / `password1` fails and
+   `karimnew1` works.
+8. **Deactivate**: open Fadi → **Deactivate Fadi** → "Yes, deactivate". "Fadi is inactive" lists
+   Nour's booking on the next open day with Move / Cancel; **Move** it to Tony (free at 15:00),
+   WhatsApp Nour. The customer page no longer shows Fadi, and `fadi` can't log in ("turned off").
+   **Bring Fadi back** → he's bookable and `fadi` / `password1` works again.
+9. **Settings → Shop**:
+   - Shop name "Tony Cuts" → Save changes: header, tab title and customer page change.
+   - WhatsApp: "12345" is refused; "71 999 888" is accepted.
+   - **Logo and colors**: upload a PNG/JPEG → preview of the customer header → Save look; the
+     customer page shows it. Make Background the same as Dark → a contrast warning; **Reset
+     colors to defaults**. **Remove logo** → Save look → name only.
+   - Services: change a price, add a service; booking window, a special period, a closed day:
+     the customer page follows. A closed day with bookings lists them at the top with Move /
+     Cancel, and saving asks "Save anyway?".
+   - Opening hours: end Monday at 18:00 → Save. Barbers working later are named, with **Trim
+     their hours to the shop's**.
+10. **Settings → Me**: Tony's own hours, days off, blocked times and password.
+11. **A barber can't reach owner pages**: log in as `karim`: 4 tabs (no Barbers), no barber
+    switcher, no Move, Settings has no Shop tab. Typing `/admin/barbers`, `/admin/barbers/sami`
+    or `/admin/shop` shows "Owner only". (The rules refuse every owner write from a barber
+    anyway: `npm run test:emu`.)
+
+Reloading a page while the emulators are busy can sit on "Loading…" for a few seconds: the
+emulator speaks HTTP/1.1, so the browser queues the new page's connections behind the old one's.
+Real Firestore uses HTTP/2 and doesn't do this.
+
+Safety (details in ARCHITECTURE.md, 3.2): `.firebaserc` holds shop aliases only, never
+`default` or Eddy's; `npm run deploy -- <shop>` refuses without a named, complete shop, shows its
+project and asks you to type the project ID, and runs every test before building; every
+`firebase deploy` runs `scripts/deploy-guard.mjs` first, which refuses anything not started by
+`npm run deploy` for that shop's own project and always refuses `eddy-barbershop`
+(LOCKED_PROJECTS in `scripts/deployTargets.mjs`); Vite refuses a real project outside a shop's
+own mode (`--mode <shop>`); and the app refuses to start if the emulator setting and the project
+ID don't match.
+
+### Shops
+
+Each real shop is a folder `shops/<shop>/` (`.env` with its Firebase web config, first name and
+site address; `logo.png`) plus an alias in `.firebaserc`. `npm run new-shop` starts one from
+`shops/_template/`, `npm run setup-shop` sets up its Firestore and owner once, and
+`npm run deploy -- <shop>` deploys it. Step by step: README, "Adding a new shop".
+`npx vite build --mode <shop>` builds a shop's site without deploying it (into `dist/`).
+
 ## Structure
 
 ```
 src/
   config.ts          SLOT_MINUTES, limits shared with firestore.rules
   types.ts           Shared types (Settings, Service, Booking)
-  data/
-    api.ts           The only data entry point for the UI (Firestore)
+  data/              The only data entry points for the UI (Firestore): shop.ts, days.ts,
+                     bookings.ts, accounts.ts (staff logins), auth.ts (Google sign-in)
   lib/
-    schedule.ts      Hours, breaks, days off and the booking window from the settings
-    settingsDoc.ts   settings/shop as stored in Firestore, and its defaults
-    slots.ts         Availability logic (15-min grid, hours, breaks, taken/blocked slots)
+    barberSchedule.ts  Shop and barber hours, days off and the booking window
+    barberSlots.ts   Per-barber availability and "Any barber"
+    staffDay.ts      The staff dashboard's day: blocked ranges, days off, clashing bookings
+    team.ts          The owner's view: per-barber numbers, move options, new barber IDs, order
+    logo.ts, logoImage.ts  Shrinking the shop's logo in the browser
+    schedule.ts      Hours, breaks and validation helpers shared by the above
+    slots.ts         The 15-min grid, past times
     shop.ts          Prices and the (https-only) directions link
     time.ts          Time/date helpers
   components/        Customer pages' parts; ui.tsx holds the shared look
-    admin/           Eddy's dashboard (Today, Calendar, Walk-in), settings, login
-  pages/             BookingPage, MyBookingsPage, AdminPage
+    admin/           Staff dashboard (Today, Calendar, Walk-in, Move), settings, login;
+                     barbers/ (the owner's barbers pages) and shop/ (shop settings, branding)
+  pages/             BookingPage, MyBookingsPage, StaffPage (/admin)
 ```
 
 ## Customer sign-in (Google)
@@ -64,29 +203,38 @@ Every domain the site runs on must also be listed under Authentication → Setti
 Authorized domains. Google refuses sign-in inside in-app browsers (Instagram, Facebook, …);
 the page tells those visitors to open it in Chrome or Safari.
 
-Eddy's `/admin` login stays email/password. His account isn't a Google one, so it never counts
-as a customer, and a Google customer who opens `/admin` sees "Not authorized".
+Staff log in at `/admin` with a username and password (email/password underneath, see
+ARCHITECTURE.md, 5). Those accounts aren't Google ones, so they never count as customers, and a
+Google customer who opens `/admin` sees "No access".
 
-## Settings (Eddy)
+## Staff dashboard
 
-`/admin/settings` (**Settings** in the bottom bar of Eddy's pages) edits `settings/shop`, which the
-booking page reads live: weekly hours with up to 2 breaks a day (or closed), services
-(15–60 min, with an optional price shown to customers), the shop's address and Google Maps
-link (for "Get directions" after booking), how many days ahead customers can book, up to 4 special periods (while today is
-between their dates, customers can book their own number of days ahead), and days off.
-Changes are saved together with **Save changes**.
+`/admin` (`StaffPage`) shows a barber his own day: **Today** (stats, Up next with Done /
+No-show, later and earlier today with breaks and blocked time, Call / WhatsApp / Cancel),
+**Calendar** (any day) and **Walk-in** (his own free times only; `createWalkIn` claims the slots
+in a transaction). The owner sees every barber's day (a barber switcher on a phone, columns side
+by side on a wide screen, numbers per barber and for the shop), adds walk-ins for any barber, and
+can **Move** any booking to a barber free for its whole length, then WhatsApp the customer.
 
-**Blocked times** (a time range on one day) are saved straight away as slot docs marked
-`blocked`, so they count as taken everywhere. Times already booked are left to their bookings.
+`/admin/settings` is his own: weekly hours with up to 2 breaks a day and days off (a draft, saved
+together; hours must stay inside the shop's opening hours, and the shop's closed weekdays can't
+be switched on), blocked times (saved straight away, only within the shop's hours on an open
+day) and his password. Nothing there cancels bookings: upcoming bookings outside his hours are
+listed at the top (and in the blocking form) with a Cancel button, and saving changes that
+create new clashes asks first. If the owner narrowed the shop's hours, "Fit my hours to the
+shop's" trims his.
 
-Nothing on the settings page cancels bookings. Upcoming bookings on a closed day, a day off,
-outside the hours or in a break are listed at the top (and in the blocking form) with a Cancel
-button, and saving changes that create new clashes asks for confirmation first.
+The owner also has **Barbers** (`/admin/barbers`: order, add a barber with his login, and per
+barber his name, schedule, blocked times, "New login" and deactivate / bring back, with a
+deactivated barber's upcoming bookings to move or cancel) and **Settings → Shop**
+(`/admin/shop`: name, WhatsApp, logo and colors, opening hours, services, address, booking
+window, special periods, closed days). A barber who opens those addresses gets "Owner only".
 
-`settings/shop` is created with the defaults in `src/lib/settingsDoc.ts` (10:00–20:00 every day,
-break 14:00–15:00, Haircut 30 min $10 / Beard 15 min $5 / Haircut + Beard 45 min $13, 4 days
-ahead) the first time Eddy
-opens `/admin`. Until then the booking page says booking opens soon.
+The rules enforce what matters on the server: a barber reads, marks, cancels and adds bookings
+only for his own `barberId`, blocks only his own days, and changes only `weeklyHours` and
+`daysOff` of his own barber doc, inside the shop's hours. Blocking inside the shop's hours is
+checked by the page only (the rules can't loop over a day doc's keys); blocked time outside the
+hours is harmless.
 
 ## Firestore security rules
 
@@ -113,41 +261,45 @@ opens `/admin`. Until then the booking page says booking opens soon.
 - Eddy is his UID *and* an email/password sign-in: if Google were ever linked to his account,
   that sign-in gets no admin rights.
 
-`ADMIN_UID` and the limits in `src/config.ts` (60-min services, 2 breaks a day, 4 special
-periods, 60-day window) are copied into the rules; keep them in sync.
+The limits in `src/config.ts` (60-min services, 2 breaks a day, 4 special periods, 60-day
+window) are copied into the rules; keep them in sync.
 
 Firestore stops evaluating a write after 1000 expressions, and a customer booking uses a lot of
 them. That's why `settings/shop` stores times as minutes and special periods as day numbers, and
 why the rules compute shared values once. The "heaviest valid booking" tests measure the worst
-case at about 820 expressions and fail if a change eats into the remaining ~15%. The booking also
-reads up to 9 documents, against a limit of 10 per write that the emulator doesn't check, so
-don't add a `get()` to customer bookings.
+case at about 650 expressions and fail if a change eats into the remaining ~30% (shop settings,
+adding a barber and moving a booking keep ~20%). The booking also reads 5 documents, against a
+limit of 10 per write that the emulator doesn't check, so add a `get()` to customer bookings only
+with care (docs/ARCHITECTURE.md, 8.5).
 
 ```bash
 npm run test:rules   # rules + data layer tests in the Firestore emulator (needs Java 21+)
-firebase deploy --only firestore:rules
 ```
+
+The rules are deployed with the site, by `npm run deploy -- <shop>`.
 
 ## Deploy (Firebase Hosting)
 
 ```bash
-npm run deploy   # production build, then firebase deploy --only hosting,firestore:rules
+npm run deploy -- <shop>   # confirm the project, run every test, build, deploy (README, "Adding a new shop")
 ```
 
-The site is served from `dist` at https://eddy-barbershop.web.app. Every path (`/admin`,
-`/my-bookings`, …) falls back to `index.html` so the router handles it. The Firestore rules go
-out in the same command so they always match the code.
+Each shop's site is served from `dist` at its own address (e.g. https://sassine-maatouk.web.app).
+Every path (`/admin`, `/my-bookings`, …) falls back to `index.html` so the router handles it.
+The site, the Firestore rules and the indexes go out in the same command so they always match
+the code.
 
-- **Auth domain:** `.env.production` sets `VITE_FIREBASE_AUTH_DOMAIN=eddy-barbershop.web.app` for
-  builds, overriding `.env.local`. Google's redirect sign-in then stays on the site's own domain,
-  which mobile browsers need. `npm run dev` keeps the `.env.local` value.
+- **Auth domain:** each shop's `VITE_FIREBASE_AUTH_DOMAIN` (in `shops/<shop>/.env`) is the
+  domain its site is served from, so Google's redirect sign-in stays on the site's own domain,
+  which mobile browsers need.
 - **Caching:** files in `/assets` have a content hash in their name, so they're cached for a year.
   `index.html`, the app's routes and the favicon are sent with `no-cache` (always revalidated),
   so the next visit after a deploy loads the new version.
 
 - **Security headers** (`firebase.json`, every path): a Content-Security-Policy that allows only
-  this site's own scripts plus Google's sign-in helper (`apis.google.com`) and reCAPTCHA, and
-  only Firebase's APIs for requests; `frame-ancestors 'self'` and `X-Frame-Options` so other
+  this site's own scripts plus Google's sign-in helper (`apis.google.com`) and reCAPTCHA, frames
+  only from the shop's own sign-in domains (`__AUTH_DOMAIN__` and `__PROJECT_ID__` in
+  `firebase.json`, filled in per shop by the deploy), and only Firebase's APIs for requests; `frame-ancestors 'self'` and `X-Frame-Options` so other
   sites can't frame the page; `nosniff`, `Referrer-Policy`, HSTS and a `Permissions-Policy`.
   Hosting doesn't add them to its own `/__/auth/*` pages, so they can't break Google sign-in.
   If something new is blocked, the browser console says which directive to extend.

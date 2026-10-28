@@ -9,12 +9,14 @@ import {
   MAX_MAPS_URL_LENGTH,
   MAX_PRICE,
   MAX_SERVICE_MINUTES,
+  MAX_SPECIAL_PERIOD_DAYS,
   MAX_SPECIAL_PERIODS,
   SLOT_MINUTES,
 } from '../config';
-import type { DateKey, DayHours, Settings, TimeString } from '../types';
+import i18n, { dateLocale, timeRange } from '../i18n';
+import type { DateKey, DayHours, Service, Settings, SpecialPeriod, TimeString } from '../types';
 import { isSafeLink } from './shop';
-import { fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
+import { dayNumber, fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
 
 export const WEEKDAY_NAMES = [
   'Monday',
@@ -25,6 +27,12 @@ export const WEEKDAY_NAMES = [
   'Saturday',
   'Sunday',
 ];
+
+/** Weekday `index` (0 = Monday) in the current language: "Monday", or "Mon" when short. */
+export function weekdayName(index: number, width: 'long' | 'short' = 'long'): string {
+  // 1 January 2024 was a Monday.
+  return new Date(2024, 0, 1 + index).toLocaleDateString(dateLocale(), { weekday: width });
+}
 
 /** True if [aStart, aEnd) and [bStart, bEnd) overlap. */
 export function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
@@ -43,8 +51,11 @@ export function hoursOn(settings: Settings, date: DateKey): DayHours | null {
   return hours;
 }
 
+/** The booking window part of Settings or ShopSettings. */
+type WindowSettings = { bookingWindowDays: number; specialPeriods: SpecialPeriod[] };
+
 /** How many days (starting today) customers can book, counting special periods that include today. */
-export function bookingWindowOn(settings: Settings, today: DateKey): number {
+export function bookingWindowOn(settings: WindowSettings, today: DateKey): number {
   const special = settings.specialPeriods
     .filter((p) => p.start <= today && today <= p.end)
     .map((p) => p.daysAhead);
@@ -79,7 +90,15 @@ export function fitsHours(
   start: TimeString,
   durationMinutes: number,
 ): boolean {
-  const hours = hoursOn(settings, date);
+  return fitsDayHours(hoursOn(settings, date), start, durationMinutes);
+}
+
+/** True if `durationMinutes` from `start` is within `hours` and clear of its breaks (null: closed). */
+export function fitsDayHours(
+  hours: DayHours | null,
+  start: TimeString,
+  durationMinutes: number,
+): boolean {
   if (!hours) return false;
   const from = timeToMinutes(start);
   const to = from + durationMinutes;
@@ -90,31 +109,39 @@ export function fitsHours(
   );
 }
 
-function describeDay(hours: DayHours): string {
-  if (hours.closed) return 'closed';
-  const breaks = hours.breaks.map((b) => `${b.start}–${b.end}`).join(', ');
-  return `${hours.start}–${hours.end}${breaks ? ` (break ${breaks})` : ''}`;
+/** One weekday of hours: a barber's (with breaks) or the shop's opening hours (without). */
+type WeekdayHours = Pick<DayHours, 'closed' | 'start' | 'end'> & { breaks?: DayHours['breaks'] };
+
+function describeDay(hours: WeekdayHours): string {
+  if (hours.closed) return i18n.t('schedule.closed');
+  const breaks = (hours.breaks ?? []).map((b) => timeRange(b.start, b.end)).join(', ');
+  const open = timeRange(hours.start, hours.end);
+  return breaks ? i18n.t('schedule.withBreak', { hours: open, breaks }) : open;
 }
 
 /**
- * The week's hours, with consecutive days that share hours grouped:
+ * A week of hours (7 days, Monday first), with consecutive days that share hours grouped:
  * ["Mon–Sat 10:00–20:00 (break 14:00–15:00)", "Sun closed"].
  */
-export function weeklyHoursSummary(settings: Settings): string[] {
-  const short = WEEKDAY_NAMES.map((n) => n.slice(0, 3));
+export function weeklyHoursSummary(weeklyHours: WeekdayHours[]): string[] {
+  const short = WEEKDAY_NAMES.map((_, i) => weekdayName(i, 'short'));
   const lines: string[] = [];
   let first = 0;
   for (let i = 1; i <= 7; i++) {
-    const description = describeDay(settings.weeklyHours[first]);
-    if (i < 7 && describeDay(settings.weeklyHours[i]) === description) continue;
+    const description = describeDay(weeklyHours[first]);
+    if (i < 7 && describeDay(weeklyHours[i]) === description) continue;
     const days = first === i - 1 ? short[first] : `${short[first]}–${short[i - 1]}`;
-    lines.push(first === 0 && i === 7 ? `Every day ${description}` : `${days} ${description}`);
+    lines.push(
+      first === 0 && i === 7
+        ? i18n.t('schedule.everyDay', { hours: description })
+        : i18n.t('schedule.days', { days, hours: description }),
+    );
     first = i;
   }
   return lines;
 }
 
-function onGrid(time: TimeString): boolean {
+export function onGrid(time: TimeString): boolean {
   return timeToMinutes(time) % SLOT_MINUTES === 0;
 }
 
@@ -124,77 +151,102 @@ function isWholeDays(n: number, max: number): boolean {
 
 /** What's wrong with `settings`, as messages for Eddy; empty if it can be saved. */
 export function settingsErrors(settings: Settings): string[] {
-  const errors: string[] = [];
+  return [
+    ...weeklyHoursErrors(settings.weeklyHours),
+    ...servicesErrors(settings.services),
+    ...shopInfoErrors(settings.shopAddress, settings.mapsUrl),
+    ...windowErrors(settings),
+  ];
+}
 
-  settings.weeklyHours.forEach((hours, i) => {
-    const day = WEEKDAY_NAMES[i];
+/** What's wrong with one week of hours (7 days, Monday first): times, and up to 2 breaks a day. */
+export function weeklyHoursErrors(weeklyHours: DayHours[]): string[] {
+  const errors: string[] = [];
+  weeklyHours.forEach((hours, i) => {
+    const day = weekdayName(i);
     if (hours.closed) return;
     const open = timeToMinutes(hours.start);
     const close = timeToMinutes(hours.end);
     if (!onGrid(hours.start) || !onGrid(hours.end) || open >= close) {
-      errors.push(`${day}: closing time must be after opening time.`);
+      errors.push(i18n.t('schedule.closingAfterOpening', { day }));
       return;
     }
     if (hours.breaks.length > MAX_BREAKS_PER_DAY) {
-      errors.push(`${day}: at most ${MAX_BREAKS_PER_DAY} breaks.`);
+      errors.push(i18n.t('schedule.maxBreaks', { day, max: MAX_BREAKS_PER_DAY }));
     }
     const sorted = [...hours.breaks].sort((a, b) => a.start.localeCompare(b.start));
     sorted.forEach((b, j) => {
       const start = timeToMinutes(b.start);
       const end = timeToMinutes(b.end);
       if (!onGrid(b.start) || !onGrid(b.end) || start >= end) {
-        errors.push(`${day}: a break must end after it starts.`);
+        errors.push(i18n.t('schedule.breakEndAfterStart', { day }));
       } else if (start < open || end > close) {
-        errors.push(`${day}: breaks must be within opening hours.`);
+        errors.push(i18n.t('schedule.breakWithinHours', { day }));
       } else if (j > 0 && start < timeToMinutes(sorted[j - 1].end)) {
-        errors.push(`${day}: breaks overlap.`);
+        errors.push(i18n.t('schedule.breaksOverlap', { day }));
       }
     });
   });
+  return errors;
+}
 
-  if (settings.services.length === 0) errors.push('Add at least one service.');
+/** What's wrong with the services: names, lengths and prices. */
+export function servicesErrors(services: Service[]): string[] {
+  const errors: string[] = [];
+  if (services.length === 0) errors.push(i18n.t('schedule.addService'));
   const names = new Set<string>();
-  for (const service of settings.services) {
+  for (const service of services) {
     const name = service.name.trim();
-    if (!name) errors.push('Every service needs a name.');
-    else if (names.has(name.toLowerCase())) errors.push(`Two services are called "${name}".`);
+    if (!name) errors.push(i18n.t('schedule.serviceNeedsName'));
+    else if (names.has(name.toLowerCase())) errors.push(i18n.t('schedule.duplicateService', { name }));
     names.add(name.toLowerCase());
     const d = service.durationMinutes;
     if (!Number.isInteger(d) || d < SLOT_MINUTES || d > MAX_SERVICE_MINUTES || d % SLOT_MINUTES) {
-      errors.push(`${name || 'A service'}: length must be 15 to ${MAX_SERVICE_MINUTES} minutes.`);
+      errors.push(i18n.t('schedule.serviceLength', { name: name || i18n.t('schedule.aService'), max: MAX_SERVICE_MINUTES }));
     }
     const p = service.price;
     // Whole cents, so "$12.50" is fine but "$12.555" isn't.
     if (p !== undefined && !(p >= 0 && p <= MAX_PRICE && Math.round(p * 100) === p * 100)) {
-      errors.push(`${name || 'A service'}: price must be 0 to ${MAX_PRICE} dollars, or empty.`);
+      errors.push(i18n.t('schedule.servicePrice', { name: name || i18n.t('schedule.aService'), max: MAX_PRICE }));
     }
   }
+  return errors;
+}
 
-  if (settings.shopAddress.trim().length > MAX_ADDRESS_LENGTH) {
-    errors.push(`The address can be at most ${MAX_ADDRESS_LENGTH} characters.`);
+/** What's wrong with the shop's address and Google Maps link. */
+export function shopInfoErrors(shopAddress: string, mapsUrl: string): string[] {
+  const errors: string[] = [];
+  if (shopAddress.trim().length > MAX_ADDRESS_LENGTH) {
+    errors.push(i18n.t('schedule.addressLength', { max: MAX_ADDRESS_LENGTH }));
   }
-  const mapsUrl = settings.mapsUrl.trim();
-  if (mapsUrl && (!isSafeLink(mapsUrl) || mapsUrl.length > MAX_MAPS_URL_LENGTH)) {
-    errors.push('The Google Maps link must start with https:// (copy it from Share in Google Maps).');
+  const url = mapsUrl.trim();
+  if (url && (!isSafeLink(url) || url.length > MAX_MAPS_URL_LENGTH)) {
+    errors.push(i18n.t('schedule.mapsLink'));
   }
+  return errors;
+}
 
+/** What's wrong with the booking window and the special periods. */
+export function windowErrors(settings: WindowSettings): string[] {
+  const errors: string[] = [];
   if (!isWholeDays(settings.bookingWindowDays, MAX_BOOKING_WINDOW_DAYS)) {
-    errors.push(`Booking window must be 1 to ${MAX_BOOKING_WINDOW_DAYS} days.`);
+    errors.push(i18n.t('schedule.windowDays', { max: MAX_BOOKING_WINDOW_DAYS }));
   }
 
   if (settings.specialPeriods.length > MAX_SPECIAL_PERIODS) {
-    errors.push(`At most ${MAX_SPECIAL_PERIODS} special periods.`);
+    errors.push(i18n.t('schedule.maxSpecialPeriods', { max: MAX_SPECIAL_PERIODS }));
   }
   for (const period of settings.specialPeriods) {
-    const name = period.name.trim() || 'Special period';
-    if (!period.name.trim()) errors.push('Every special period needs a name.');
+    const name = period.name.trim() || i18n.t('schedule.specialPeriod');
+    if (!period.name.trim()) errors.push(i18n.t('schedule.specialNeedsName'));
     if (!period.start || !period.end || period.start > period.end) {
-      errors.push(`${name}: the end date must be on or after the start date.`);
+      errors.push(i18n.t('schedule.specialEndAfterStart', { name }));
+    } else if (dayNumber(period.end) - dayNumber(period.start) + 1 > MAX_SPECIAL_PERIOD_DAYS) {
+      errors.push(i18n.t('schedule.specialMaxDays', { name, max: MAX_SPECIAL_PERIOD_DAYS }));
     }
     if (!isWholeDays(period.daysAhead, MAX_BOOKING_WINDOW_DAYS)) {
-      errors.push(`${name}: days ahead must be 1 to ${MAX_BOOKING_WINDOW_DAYS}.`);
+      errors.push(i18n.t('schedule.specialDaysAhead', { name, max: MAX_BOOKING_WINDOW_DAYS }));
     }
   }
-
   return errors;
 }

@@ -1,0 +1,80 @@
+/**
+ * The shop's colors (settings/branding): format checks, and contrast warnings so the owner doesn't
+ * pick colors customers can't read. Same thresholds as WCAG AA (docs/DEVELOPMENT.md, "Look").
+ */
+import i18n from '../i18n';
+import type { BrandColors, Branding } from '../types';
+import { isLogoDataUrl } from './logo';
+
+/** "#RRGGBB". firestore.rules checks the same. */
+export function isHexColor(value: string): boolean {
+  return /^#[0-9A-Fa-f]{6}$/.test(value);
+}
+
+/** Relative luminance of a "#RRGGBB" color (WCAG 2). */
+function luminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Contrast ratio of two "#RRGGBB" colors, from 1 (same) to 21 (black on white). */
+export function contrastRatio(a: string, b: string): number {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/**
+ * Hard-to-read pairs, as messages for the owner (saving is still allowed): text on the page
+ * background needs 4.5:1, the accent on the dark header (buttons, highlights) 3:1.
+ */
+export function contrastWarnings(colors: BrandColors): string[] {
+  const warnings: string[] = [];
+  if (contrastRatio(colors.dark, colors.light) < 4.5) {
+    warnings.push(i18n.t('branding.hardToRead'));
+  }
+  if (contrastRatio(colors.accent, colors.dark) < 3) {
+    warnings.push(i18n.t('branding.accentHard'));
+  }
+  return warnings;
+}
+
+/** What's wrong with `branding`; empty if it can be saved. */
+export function brandingErrors(branding: Branding): string[] {
+  const errors: string[] = [];
+  if (branding.logo !== null && !isLogoDataUrl(branding.logo)) {
+    errors.push(i18n.t('branding.logoInvalid'));
+  }
+  const { dark, accent, light } = branding.colors;
+  if (![dark, accent, light].every(isHexColor)) {
+    errors.push(i18n.t('branding.colorsFormat'));
+  }
+  return errors;
+}
+
+/** `hex` moved `amount` (0–1) of the way to white. */
+export function lighten(hex: string, amount: number): string {
+  const channel = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16);
+    return Math.round(c + (255 - c) * amount)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${channel(1)}${channel(3)}${channel(5)}`.toUpperCase();
+}
+
+/**
+ * The Tailwind theme variables (src/index.css) the shop's colors replace: the dark color is
+ * the charcoal, the accent the brass (and a lighter brass for text on the dark color), the light
+ * color the cream background.
+ */
+export function themeVariables(colors: BrandColors): Record<string, string> {
+  return {
+    '--color-charcoal': colors.dark,
+    '--color-brass': colors.accent,
+    '--color-brass-light': lighten(colors.accent, 0.35),
+    '--color-cream': colors.light,
+  };
+}

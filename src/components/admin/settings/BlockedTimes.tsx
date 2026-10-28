@@ -1,27 +1,39 @@
 import { useEffect, useState } from 'react';
-import { blockTime, subscribeBlockedTimes, subscribeBookings, unblockTime } from '../../../data/api';
-import { hoursOn, overlaps } from '../../../lib/schedule';
+import { useTranslation } from 'react-i18next';
+import i18n, { timeRange } from '../../../i18n';
+import { subscribeBookingsOn } from '../../../data/bookings';
+import { blockTime, subscribeBlockedTimes, unblockTime } from '../../../data/days';
+import { store } from '../../../data/firebase';
+import { barberHoursOn, shopHoursOn } from '../../../lib/barberSchedule';
+import { overlaps } from '../../../lib/schedule';
+import { blockError } from '../../../lib/staffDay';
 import { formatDayLong, timeToMinutes } from '../../../lib/time';
-import type { AdminBooking, BlockedTime, DateKey, Settings } from '../../../types';
-import { BookingCard } from '../BookingCard';
+import type { Barber, BlockedTime, DateKey, ShopSettings, ShopStaffBooking } from '../../../types';
 import { inputBase } from '../../ui';
+import { BookingCard } from '../BookingCard';
 import { cardClass, removeButtonClass, Section, smallButtonClass, TimeSelect } from './fields';
 
 interface Props {
   today: DateKey;
-  settings: Settings;
+  shop: ShopSettings;
+  /** Whose time is blocked: the signed-in barber's own, or any barber's for the owner. */
+  barber: Barber;
+  /** The signed-in barber's own ("you") rather than one the owner manages. */
+  self: boolean;
 }
 
 /**
- * Blocks a time range on one day, saved straight away (not part of the settings draft).
- * Blocked times are slot docs, so customers' availability and the rules treat them as taken.
- * Times already booked stay with their bookings: they're listed so Eddy can cancel them first.
+ * Blocks a time range on one day of a barber's, saved straight away (not part of the hours
+ * draft), so customers can't book it. Only inside the shop's hours, on a day it's open.
+ * Times already booked stay with their bookings: they're listed so he can cancel them first.
  */
-export function BlockedTimes({ today, settings }: Props) {
+export function BlockedTimes({ today, shop, barber, self }: Props) {
+  const { t } = useTranslation();
+  const barberId = barber.id;
   const [date, setDate] = useState(today);
   const [start, setStart] = useState('16:00');
   const [end, setEnd] = useState('17:00');
-  const [dayBookings, setDayBookings] = useState<{ date: DateKey; items: AdminBooking[] } | null>(
+  const [dayBookings, setDayBookings] = useState<{ date: DateKey; items: ShopStaffBooking[] } | null>(
     null,
   );
   const [blocked, setBlocked] = useState<BlockedTime[] | null>(null);
@@ -30,28 +42,30 @@ export function BlockedTimes({ today, settings }: Props) {
 
   useEffect(
     () =>
-      subscribeBookings(
+      subscribeBookingsOn(
+        store,
+        barberId,
         date,
         (items) => setDayBookings({ date, items }),
         (err) => console.error(err),
       ),
-    [date],
+    [barberId, date],
   );
 
   useEffect(
     () =>
-      subscribeBlockedTimes(today, setBlocked, (err) => {
+      subscribeBlockedTimes(store, barberId, today, setBlocked, (err) => {
         console.error(err);
-        setMessage({ error: true, text: "Couldn't load blocked times. Check your connection." });
+        setMessage({ error: true, text: i18n.t('blocked.loadError') });
       }),
-    [today],
+    [barberId, today],
   );
 
   const from = timeToMinutes(start);
   const to = timeToMinutes(end);
-  const validRange = from < to;
+  const rangeError = blockError(shop, date, start, end);
   const clashes =
-    dayBookings?.date === date && validRange
+    dayBookings?.date === date && from < to
       ? dayBookings.items.filter(
           (b) =>
             b.status === 'booked' &&
@@ -63,23 +77,25 @@ export function BlockedTimes({ today, settings }: Props) {
             ),
         )
       : [];
-  const hours = hoursOn(settings, date);
+  const shopHours = shopHoursOn(shop, date);
+  const myHours = barberHoursOn(shop, barber, date);
 
   async function block() {
     setMessage(null);
+    if (rangeError) return;
     setBusy(true);
     try {
-      const count = await blockTime(date, start, end);
+      const count = await blockTime(store, barberId, date, start, end);
       setMessage({
         error: false,
         text:
           count === 0
-            ? 'Nothing to block: those times are already booked or blocked.'
-            : `Blocked ${start}–${end} on ${formatDayLong(date)}.`,
+            ? t('blocked.nothing')
+            : t('blocked.done', { start, end, day: formatDayLong(date) }),
       });
     } catch (err) {
       console.error(err);
-      setMessage({ error: true, text: "Couldn't block. Check your connection and try again." });
+      setMessage({ error: true, text: t('blocked.failed') });
     }
     setBusy(false);
   }
@@ -87,17 +103,17 @@ export function BlockedTimes({ today, settings }: Props) {
   async function unblock(range: BlockedTime) {
     setMessage(null);
     try {
-      await unblockTime(range.date, range.start, range.end);
+      await unblockTime(store, barberId, range.date, range.start, range.end);
     } catch (err) {
       console.error(err);
-      setMessage({ error: true, text: "Couldn't unblock. Check your connection and try again." });
+      setMessage({ error: true, text: t('blocked.unblockFailed') });
     }
   }
 
   return (
     <Section
-      title="Blocked times"
-      description="Block part of a day so customers can't book it. Saved straight away."
+      title={t('blocked.title')}
+      description={self ? t('blocked.descriptionYou') : t('blocked.descriptionThem', { name: barber.name })}
     >
       {blocked && blocked.length > 0 && (
         <ul className="mb-3 grid gap-2">
@@ -108,16 +124,14 @@ export function BlockedTimes({ today, settings }: Props) {
             >
               <span className="text-sm font-medium">
                 {formatDayLong(range.date)} ·{' '}
-                <span className="tabular-nums">
-                  {range.start}–{range.end}
-                </span>
+                <span className="tabular-nums">{timeRange(range.start, range.end)}</span>
               </span>
               <button
                 type="button"
                 onClick={() => unblock(range)}
                 className={removeButtonClass}
               >
-                Unblock
+                {t('blocked.unblock')}
               </button>
             </li>
           ))}
@@ -126,7 +140,7 @@ export function BlockedTimes({ today, settings }: Props) {
 
       <div className={cardClass}>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium">Day</span>
+          <span className="mb-1 block text-sm font-medium">{t('common.day')}</span>
           <input
             type="date"
             min={today}
@@ -136,22 +150,41 @@ export function BlockedTimes({ today, settings }: Props) {
           />
         </label>
         <p className="mt-1 text-sm text-muted">
-          {hours ? `Open ${hours.start}–${hours.end} that day.` : 'The shop is closed that day.'}
+          {!shopHours
+            ? t('blocked.shopClosed')
+            : `${t('blocked.shopOpen', { start: shopHours.start, end: shopHours.end })} ${
+                myHours
+                  ? self
+                    ? t('blocked.youWork', { start: myHours.start, end: myHours.end })
+                    : t('blocked.theyWork', { name: barber.name, start: myHours.start, end: myHours.end })
+                  : self
+                    ? t('blocked.youOff')
+                    : t('blocked.theyOff', { name: barber.name })
+              }`}
         </p>
         <div className="mt-3 flex items-center gap-2">
-          <TimeSelect label="Block from" value={start} onChange={setStart} />
-          <span className="text-muted">to</span>
-          <TimeSelect label="Block until" value={end} onChange={setEnd} />
+          <TimeSelect
+            label={t('blocked.from')}
+            value={start}
+            onChange={setStart}
+            min={shopHours?.start}
+            max={shopHours?.end}
+          />
+          <span className="text-muted">{t('common.toTime')}</span>
+          <TimeSelect
+            label={t('blocked.until')}
+            value={end}
+            onChange={setEnd}
+            min={shopHours?.start}
+            max={shopHours?.end}
+          />
         </div>
-        {!validRange && <p className="mt-2 text-sm text-pole-red">The end must be after the start.</p>}
+        {rangeError && <p className="mt-2 text-sm text-pole-red">{rangeError}</p>}
 
         {clashes.length > 0 && (
           <div className="mt-4 rounded-xl border border-brass/50 bg-brass/10 p-3">
             <p className="mb-3 text-sm font-medium text-ink">
-              {clashes.length === 1 ? 'This booking is' : `These ${clashes.length} bookings are`}{' '}
-              in that time. Blocking won't cancel {clashes.length === 1 ? 'it' : 'them'}: cancel
-              here if needed and let the customer know. If you block first, a booking's time opens
-              up again when it's cancelled.
+              {clashes.length === 1 ? t('blocked.clashOne') : t('blocked.clashMany', { count: clashes.length })}
             </p>
             <ul className="grid gap-3">
               {clashes.map((b) => (
@@ -170,14 +203,14 @@ export function BlockedTimes({ today, settings }: Props) {
         <button
           type="button"
           onClick={block}
-          disabled={busy || !validRange}
+          disabled={busy || rangeError !== null}
           className={`${smallButtonClass} mt-3 w-full`}
         >
           {busy
-            ? 'Blocking…'
+            ? t('blocked.blocking')
             : clashes.length > 0
-              ? `Block the free times ${start}–${end} anyway`
-              : `Block ${start}–${end}`}
+              ? t('blocked.blockAnyway', { start, end })
+              : t('blocked.block', { start, end })}
         </button>
       </div>
     </Section>

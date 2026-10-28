@@ -69,7 +69,7 @@ describe('fitsHours', () => {
 
 describe('weeklyHoursSummary', () => {
   it('says "every day" when all days match', () => {
-    expect(weeklyHoursSummary(base)).toEqual(['Every day 10:00–20:00 (break 14:00–15:00)']);
+    expect(weeklyHoursSummary(base.weeklyHours)).toEqual(['Every day 10:00–20:00 (break 14:00–15:00)']);
   });
 
   it('groups consecutive days with the same hours', () => {
@@ -79,11 +79,16 @@ describe('weeklyHoursSummary', () => {
         i === 5 ? { ...d, end: '16:00', breaks: [] } : i === 6 ? { ...d, closed: true } : d,
       ),
     };
-    expect(weeklyHoursSummary(s)).toEqual([
+    expect(weeklyHoursSummary(s.weeklyHours)).toEqual([
       'Mon–Fri 10:00–20:00 (break 14:00–15:00)',
       'Sat 10:00–16:00',
       'Sun closed',
     ]);
+  });
+
+  it("works for the shop's opening hours, which have no breaks", () => {
+    const opening = base.weeklyHours.map(({ closed, start, end }, i) => ({ closed: closed || i === 6, start, end }));
+    expect(weeklyHoursSummary(opening)).toEqual(['Mon–Sat 10:00–20:00', 'Sun closed']);
   });
 });
 

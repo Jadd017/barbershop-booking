@@ -1,48 +1,78 @@
 rules_version = '2';
 
-// Server-side checks for the booking site. The page validates too, but only these rules count.
+// Server-side checks for a multi-barber shop (one Firebase project per shop, the same rules for
+// every shop). The page validates too, but only these rules count. Plan: docs/ARCHITECTURE.md.
 //
-// Customers sign in with Google to book; Eddy signs in with email/password.
+// Customers sign in with Google. Staff sign in with email/password and are whatever their
+// staff/{uid} doc says: the shop's one owner (who is also a barber) or a barber. A password
+// account without an active staff doc gets nothing.
 //
-// Collections (see src/data/api.ts):
-// - settings/shop            Eddy's settings: weekly hours and breaks, services (with optional
-//                            prices), booking window, shop address and Maps link,
-//                            special periods and days off. Readable by all, written only by Eddy.
-//                            Customer bookings are checked against it (see src/lib/settingsDoc.ts).
-// - bookings/{bookingCode}   full booking. Customers can read and cancel only their own (customerUid);
-//                            Eddy can read everything. Walk-ins Eddy adds have customerUid null.
-// - slots/{date}_{HHMM}      one doc per taken 15-min slot: {bookingId, date} for a booking, or
-//                            {date, blocked: true} for a time Eddy blocked. No personal info, readable by all.
-// - phoneLimits/{phone}_{n}  n = 1 or 2: the two "seats" a phone number can hold. Each points at the
-//                            booking using it. A seat is free again once that booking has started or
-//                            is no longer "booked", so a phone can't hold more than 2 future bookings.
-// - userLimits/{uid}_{n}     the same two seats per Google account.
-// - customers/{uid}          the name and phone last used, to pre-fill the form. Only they and Eddy read it.
+// Collections (see src/lib/shopDoc.ts and src/lib/barberDoc.ts):
+// - settings/shop            shop-wide: name, opening hours, services, booking window, special
+//                            periods, closed days, WhatsApp, address. Readable by all, owner writes.
+// - settings/branding        logo and colors. Readable by all, owner writes. Never read by bookings.
+// - barbers/{barberId}       name, active, order, weekly hours with breaks, days off. Readable by
+//                            all. Owner writes; a barber may change his own hours and days off.
+// - days/{barberId}_{date}   one barber's taken time that day: `booked` ("HHMM" -> booking code)
+//                            and `blocked` ("HHMM" -> true). Readable by all. A change to `booked`
+//                            sets `lastBookingId` (the booking it's for, so the rule can check it)
+//                            and `bookingAt` (the time of that write, so the booking's rule can tell
+//                            the day doc changed with it, not in some earlier write).
+// - bookings/{bookingCode}   the full booking, with barberId and barberName. Customers read and
+//                            cancel their own; a barber reads and manages his own; the owner all.
+// - staff/{uid}              {username, barberId, role, active, createdAt}. Owner writes.
+// - usernames/{username}     {uid, email}: the login a username currently signs in as.
+// - phoneLimits/{phone}_{n}, userLimits/{uid}_{n}   n = 1 or 2: the two "seats" a phone number
+//                            and a Google account can hold, each pointing at a booking. A seat is
+//                            free again once its booking has started or is no longer "booked".
+// - customers/{uid}          the name and phone last used, to pre-fill the form.
 //
-// Firestore stops evaluating a write after 1000 expressions, and a customer booking comes close.
-// So settings/shop stores numbers rather than text where the rules read it (times in minutes,
-// special periods as day numbers), and values used in several checks are worked out once and
-// passed down. The "heaviest valid booking" test checks the worst case still fits.
+// Limits: Firestore stops evaluating a write after 1000 expressions, and a single document write
+// may read at most 10 documents. A customer booking is the heaviest write: it reads exactly 5
+// (settings/shop, the barber, his day, its phone seat and its account seat), and the "heaviest
+// valid booking" tests keep its expressions well under the limit. That's why settings and barbers
+// store times as minutes, why special periods are also stored as a day -> days-ahead map, why a
+// booking names the seats it takes, why a barber's slots are one day doc rather than one doc per
+// slot, and why values used in several checks are worked out once and passed down.
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Keep in sync with ADMIN_UID in src/config.ts. Eddy signs in with email/password only: if
-    // Google (or anything else) were ever linked to his account, that sign-in isn't admin.
-    // The UID is checked first, so customers' writes don't pay for the second check.
-    function isAdmin() {
-      return request.auth != null && request.auth.uid == 'HHBoRoG4jphMLu2OjKpYTGJTKd42'
-        && request.auth.token.firebase.sign_in_provider == 'password';
-    }
+    // ---- Who is asking ----
 
-    // A customer signed in with Google (not Eddy's email account, nor any other sign-in method).
+    // A customer signed in with Google (not a staff account, nor any other sign-in method).
     function isCustomer() {
       return request.auth != null && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
 
-    // The signed-in customer owns booking `b`.
-    function ownsBooking(b) {
-      return isCustomer() && b.customerUid == request.auth.uid;
+    // Signed in with email/password: maybe staff. Checked before reading staff/{uid}, so
+    // customers' writes never pay for that read.
+    function isPasswordUser() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password';
     }
+
+    // The signer's staff doc. Only after isPasswordUser(); a missing doc denies.
+    function me() {
+      return get(/databases/$(database)/documents/staff/$(request.auth.uid)).data;
+    }
+
+    function isOwnerDoc(st) {
+      return st.active == true && st.role == 'owner';
+    }
+
+    // Staff doc `st` may manage barber `barberId`'s schedule and bookings.
+    function actsForDoc(st, barberId) {
+      return st.active == true && (st.role == 'owner' || st.barberId == barberId);
+    }
+
+    function isOwner() {
+      return isPasswordUser() && isOwnerDoc(me());
+    }
+
+    function actsFor(barberId) {
+      return isPasswordUser() && actsForDoc(me(), barberId);
+    }
+
+    // ---- Paths ----
 
     function settings() {
       return get(/databases/$(database)/documents/settings/shop).data;
@@ -52,9 +82,23 @@ service cloud.firestore {
       return /databases/$(database)/documents/bookings/$(id);
     }
 
-    function slotPath(id) {
-      return /databases/$(database)/documents/slots/$(id);
+    function barberPath(barberId) {
+      return /databases/$(database)/documents/barbers/$(barberId);
     }
+
+    function dayPath(barberId, date) {
+      return /databases/$(database)/documents/days/$(barberId + '_' + date);
+    }
+
+    function staffPath(uid) {
+      return /databases/$(database)/documents/staff/$(uid);
+    }
+
+    function usernamePath(username) {
+      return /databases/$(database)/documents/usernames/$(username);
+    }
+
+    // ---- Times and slots ----
 
     // "12:30" -> 750
     function minutesOf(time) {
@@ -62,50 +106,25 @@ service cloud.firestore {
       return int(parts[0]) * 60 + int(parts[1]);
     }
 
-    // ("2026-10-22", 750) -> "2026-10-22_1230", the ID of that slot doc.
+    // 750 -> "1230", a slot's key in a day doc (slotKey in src/lib/barberDoc.ts).
     // 10000 + 1230 = "11230", minus its first digit: one string() instead of padding each part.
-    function slotIdAt(date, minutes) {
-      return date + '_' + string(10000 + minutes / 60 * 100 + minutes % 60)[1:5];
+    function slotKey(minutes) {
+      return string(10000 + minutes / 60 * 100 + minutes % 60)[1:5];
     }
 
-    // `start` below is always the booking's startTime in minutes.
-
-    // Booking `b` (on its date, from `start`) ends up owning every 15-min slot it occupies.
-    // Bookings are at most 60 min (4 slots, see validDuration). Longer ones would need another
-    // line here, and a customer booking would then go over the 10 document reads a write may do.
-    function slotsClaimed(b, id, start) {
-      let prefix = b.date + '_';
-      return slotOwnerAfter(prefix, start) == id
-        && (b.durationMinutes <= 15 || slotOwnerAfter(prefix, start + 15) == id)
-        && (b.durationMinutes <= 30 || slotOwnerAfter(prefix, start + 30) == id)
-        && (b.durationMinutes <= 45 || slotOwnerAfter(prefix, start + 45) == id);
+    // The keys of every 15-min slot booking `b` occupies from `start`. Bookings are at most
+    // 60 min (validDuration), so at most 4.
+    function slotKeys(b, start) {
+      return [slotKey(start), slotKey(start + 15), slotKey(start + 30), slotKey(start + 45)]
+        [0:b.durationMinutes / 15];
     }
 
-    // The booking that the slot at `minutes` on the day of `prefix` ("2026-10-22_") belongs to
-    // after this write. Builds the ID like slotIdAt, inlined because customer bookings call it the
-    // most (see the top of this file).
-    function slotOwnerAfter(prefix, minutes) {
-      return getAfter(/databases/$(database)/documents/slots/$(prefix + string(10000 + minutes / 60 * 100 + minutes % 60)[1:5])).data.bookingId;
-    }
-
-    // True if `b` has no i-th slot, or that slot no longer belongs to booking `id` afterwards.
-    function slotReleased(b, id, start, i) {
-      return i * 15 >= b.durationMinutes
-        || !existsAfter(slotPath(slotIdAt(b.date, start + i * 15)))
-        || getAfter(slotPath(slotIdAt(b.date, start + i * 15))).data.bookingId != id;
-    }
-
-    function slotsReleased(b, id, start) {
-      return slotReleased(b, id, start, 0) && slotReleased(b, id, start, 1)
-        && slotReleased(b, id, start, 2) && slotReleased(b, id, start, 3);
-    }
-
-    // True if `slotId` is one of the slots booking `b` occupies.
-    function coversSlot(b, slotId, start) {
-      return slotId == slotIdAt(b.date, start)
-        || (b.durationMinutes > 15 && slotId == slotIdAt(b.date, start + 15))
-        || (b.durationMinutes > 30 && slotId == slotIdAt(b.date, start + 30))
-        || (b.durationMinutes > 45 && slotId == slotIdAt(b.date, start + 45));
+    // Every slot of booking `b` in day map `m` holds booking `id`.
+    function slotsHold(m, b, id, start) {
+      return m[slotKey(start)] == id
+        && (b.durationMinutes <= 15 || m[slotKey(start + 15)] == id)
+        && (b.durationMinutes <= 30 || m[slotKey(start + 30)] == id)
+        && (b.durationMinutes <= 45 || m[slotKey(start + 45)] == id);
     }
 
     function validDate(date) {
@@ -117,7 +136,7 @@ service cloud.firestore {
       return time is string && time.matches('^([01][0-9]|2[0-3]):(00|15|30|45)$');
     }
 
-    // Whole slots, 15 to 60 min (MAX_SERVICE_MINUTES in src/config.ts; see slotsClaimed).
+    // Whole slots, 15 to 60 min (MAX_SERVICE_MINUTES in src/config.ts; see slotKeys).
     function validDuration(b) {
       return b.durationMinutes is int && b.durationMinutes % 15 == 0
         && b.durationMinutes >= 15 && b.durationMinutes <= 60;
@@ -136,7 +155,7 @@ service cloud.firestore {
     }
 
     // Days since 1970-01-01 of a date at 00:00 UTC, or of shopNow() for today in the shop.
-    // Same as dayNumber in src/lib/settingsDoc.ts.
+    // Same as dayNumber in src/lib/time.ts.
     function dayNumber(t) {
       return t.toMillis() / 86400000;
     }
@@ -148,25 +167,15 @@ service cloud.firestore {
         && b.startAt > request.time;
     }
 
-    // Special period i exists, includes `today`, and its own window (today plus daysAhead - 1
-    // days) reaches `bookingDay`. All three are day numbers.
-    function periodAllows(periods, i, bookingDay, today) {
-      return periods.size() > i
-        && periods[i].startDay <= today && today <= periods[i].endDay
-        && bookingDay < today + periods[i].daysAhead;
-    }
-
-    // Settings hold at most 4 special periods (MAX_SPECIAL_PERIODS in src/config.ts).
-    function anyPeriodAllows(periods, bookingDay, today) {
-      return periodAllows(periods, 0, bookingDay, today) || periodAllows(periods, 1, bookingDay, today)
-        || periodAllows(periods, 2, bookingDay, today) || periodAllows(periods, 3, bookingDay, today);
-    }
+    // ---- Booking window and hours ----
 
     // Within the booking window (today plus bookingWindowDays - 1 days), or the window of a
-    // special period going on today.
+    // special period going on today. `periodDays` maps each day number inside a special period to
+    // how many days ahead customers can book then (periodDaysOf in src/lib/shopDoc.ts), so this is
+    // one lookup instead of walking the periods. Both are day numbers.
     function withinWindow(s, bookingDay, today) {
       return bookingDay < today + s.bookingWindowDays
-        || anyPeriodAllows(s.specialPeriods, bookingDay, today);
+        || bookingDay < today + s.periodDays.get(string(today), 0);
     }
 
     // [start, end) misses break i of the day, or the day has no break i.
@@ -174,24 +183,28 @@ service cloud.firestore {
       return breaks.size() <= i || end <= breaks[i].start || start >= breaks[i].end;
     }
 
-    // `hours` (one weekday of settings, in minutes) is open from `start` to `end`, clear of its
-    // (at most 2) breaks.
+    // `hours` (one weekday, in minutes) is open from `start` to `end`. Shop opening hours have no
+    // breaks; a barber's hours have at most 2 (barberOpenDuring).
     function openDuring(hours, start, end) {
-      return hours.closed == false && start >= hours.open && end <= hours.close
+      return hours.closed == false && start >= hours.open && end <= hours.close;
+    }
+
+    function barberOpenDuring(hours, start, end) {
+      return openDuring(hours, start, end)
         && clearOfBreak(hours.breaks, 0, start, end) && clearOfBreak(hours.breaks, 1, start, end);
     }
 
-    // `b` isn't on a day off, and its weekday is open for all of it. weeklyHours is Monday
-    // first, and dayOfWeek() is 1 for Monday.
-    function withinHours(b, s, day, start) {
-      return !(b.date in s.daysOff)
-        && openDuring(s.weeklyHours[day.dayOfWeek() - 1], start, start + b.durationMinutes);
+    // `b` is on a day the shop is open and barber `barber` works, within both their hours and
+    // clear of his breaks. Weekly hours are Monday first, and dayOfWeek() is 1 for Monday.
+    function withinHours(b, s, barber, day, start) {
+      let weekday = day.dayOfWeek() - 1;
+      let end = start + b.durationMinutes;
+      return !(b.date in s.closedDays) && !(b.date in barber.daysOff)
+        && openDuring(s.openingHours[weekday], start, end)
+        && barberOpenDuring(barber.weeklyHours[weekday], start, end);
     }
 
-    // Seat n of `owner` in `collection` ends up pointing at booking `id`.
-    function holdsSeat(collection, owner, id, n) {
-      return getAfter(/databases/$(database)/documents/$(collection)/$(owner + '_' + string(n))).data.bookingId == id;
-    }
+    // ---- Bookings ----
 
     function validName(name) {
       return name is string && name.size() >= 2 && name.size() <= 50 && name == name.trim();
@@ -201,18 +214,23 @@ service cloud.firestore {
       return phone is string && phone.matches('^[+]961(3[0-9]{6}|(70|71|76|78|79|81)[0-9]{6})$');
     }
 
-    function validCustomerBooking(id) {
-      let b = request.resource.data;
-      let fields = ['name', 'phone', 'serviceId', 'serviceName', 'date', 'startTime', 'startAt',
-                    'durationMinutes', 'bookingCode', 'status', 'createdAt',
-                    'customerUid', 'customerEmail'];
-      return isCustomer()
-        && b.keys().hasAll(fields) && b.keys().hasOnly(fields)
-        && b.customerUid == request.auth.uid
-        && b.customerEmail == request.auth.token.email
+    // Lower-case letters, digits and dashes: no "_" (it separates the day doc ID) or "/".
+    function validBarberId(barberId) {
+      return barberId is string && barberId.matches('^[a-z0-9-]{1,20}$');
+    }
+
+    function bookingFields() {
+      return ['name', 'phone', 'serviceId', 'serviceName', 'date', 'startTime', 'startAt',
+              'durationMinutes', 'bookingCode', 'status', 'createdAt', 'customerUid',
+              'customerEmail', 'barberId', 'barberName', 'anyBarber', 'phoneSeat', 'accountSeat'];
+    }
+
+    // What every new booking has, whoever makes it. "All 18 fields and nothing else" as a size
+    // check builds the field list once instead of twice (hasAll + hasOnly).
+    function validNewBooking(b, id) {
+      return b.keys().size() == 18 && b.keys().hasAll(bookingFields())
         && id.matches('^[A-HJ-NP-Z2-9]{6}$') && b.bookingCode == id
         && validName(b.name)
-        && validPhone(b.phone)
         && b.serviceId is string
         && validDuration(b)
         && validDate(b.date)
@@ -220,45 +238,88 @@ service cloud.firestore {
         && b.startAt is timestamp
         && b.status == 'booked'
         && b.createdAt == request.time
-        && customerBookingAllowed(b, id, settings(), dayOf(b), minutesOf(b.startTime));
+        && validBarberId(b.barberId)
+        && b.anyBarber is bool;
+    }
+
+    // The barber's day doc changed its `booked` slots for this booking in this same write, so its
+    // own rule (validBookedChange) checked them. Only a change to `booked` may set bookingAt.
+    function claimsSlots(b, id) {
+      let day = getAfter(dayPath(b.barberId, b.date)).data;
+      return day.lastBookingId == id && day.bookingAt == request.time;
+    }
+
+    // claimsSlots for a booking created in this write: no earlier write can have named its brand
+    // new code, so naming it is enough (and cheaper, for the heaviest write there is).
+    function claimsNewSlots(b, id) {
+      return getAfter(dayPath(b.barberId, b.date)).data.lastBookingId == id;
+    }
+
+    function validCustomerBooking(id) {
+      let b = request.resource.data;
+      return isCustomer()
+        && validNewBooking(b, id)
+        && b.customerUid == request.auth.uid
+        && b.customerEmail == request.auth.token.email
+        && validPhone(b.phone)
+        && customerBookingAllowed(b, id, settings(), get(barberPath(b.barberId)).data, dayOf(b),
+                                  minutesOf(b.startTime));
     }
 
     // The rest of validCustomerBooking, once the shape is known to be right.
-    function customerBookingAllowed(b, id, s, day, start) {
+    function customerBookingAllowed(b, id, s, barber, day, start) {
       return b.serviceId in s.services
         && b.serviceName == s.services[b.serviceId].name
         && b.durationMinutes == s.services[b.serviceId].durationMinutes
+        && barber.active == true
+        && b.barberName == barber.name
         && validStart(b, day, start)
         && withinWindow(s, dayNumber(day), dayNumber(shopNow()))
-        && withinHours(b, s, day, start)
-        && slotsClaimed(b, id, start)
-        && (holdsSeat('phoneLimits', b.phone, id, 1) || holdsSeat('phoneLimits', b.phone, id, 2))
-        && (holdsSeat('userLimits', b.customerUid, id, 1) || holdsSeat('userLimits', b.customerUid, id, 2));
+        && withinHours(b, s, barber, day, start)
+        && claimsNewSlots(b, id)
+        && holdsSeat('phoneLimits', b.phone, id, b.phoneSeat)
+        && holdsSeat('userLimits', b.customerUid, id, b.accountSeat);
     }
 
-    // Eddy's walk-ins and phone bookings may be on any day and at any time (the booking window
-    // and hours don't apply to him), but must still claim every slot they need, so they can't
-    // double-book either.
-    function validAdminBooking(id) {
+    // Walk-ins and phone bookings by the barber himself or the owner: any day and time (the
+    // window, hours and blocked times don't apply to staff), but they still claim their slots, so
+    // they can't double-book either.
+    function validStaffBooking(id) {
       let b = request.resource.data;
-      return isAdmin()
-        && b.bookingCode == id
-        && validDate(b.date)
-        && validTime(b.startTime)
-        && validDuration(b)
-        && b.status == 'booked'
-        && b.createdAt == request.time
-        && slotsClaimed(b, id, minutesOf(b.startTime));
+      return isPasswordUser()
+        && validNewBooking(b, id)
+        && actsForDoc(me(), b.barberId)
+        && (b.phone == null || validPhone(b.phone))
+        && b.customerUid == null && b.customerEmail == null
+        && b.phoneSeat == null && b.accountSeat == null
+        && b.anyBarber == false
+        && b.barberName == get(barberPath(b.barberId)).data.name
+        && claimsNewSlots(b, id);
     }
 
-    // Eddy only changes the status (done, no-show, back to booked, cancelled). Moving a booking
-    // would leave its slots behind, and reviving a cancelled one could clash with whoever took
-    // its time since, so neither is allowed.
-    function validAdminUpdate() {
-      return isAdmin()
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'statusChangedAt', 'cancelledAt'])
-        && (resource.data.status != 'cancelled' || request.resource.data.status == 'cancelled');
+    // Seat n of `owner` in `collection` ends up pointing at booking `id`. The booking says which
+    // seat it takes (phoneSeat, accountSeat); only seats 1 and 2 can ever exist (validSeatClaim),
+    // so any other number fails here.
+    function holdsSeat(collection, owner, id, n) {
+      return getAfter(/databases/$(database)/documents/$(collection)/$(owner + '_' + string(n))).data.bookingId == id;
+    }
+
+    // Staff change a booking's status: done, no-show, back to booked, or cancelled (only from
+    // booked, freeing its slots). Moving it in time would leave its slots behind, and reviving a
+    // cancelled one could clash with whoever took its time since, so neither is allowed.
+    function validStatusUpdate(id) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return isPasswordUser()
+        && actsForDoc(me(), before.barberId)
+        && before.status != 'cancelled'
+        && ((after.status in ['booked', 'done', 'no-show']
+             && changed.hasOnly(['status', 'statusChangedAt'])
+             && after.statusChangedAt == request.time)
+            || (before.status == 'booked' && after.status == 'cancelled'
+                && changed.hasOnly(['status', 'cancelledAt'])
+                && after.cancelledAt == request.time && claimsSlots(before, id)));
     }
 
     // Customer cancel: only their own booking, only "booked" -> "cancelled" with cancelledAt,
@@ -266,19 +327,282 @@ service cloud.firestore {
     function validCancel(id) {
       let before = resource.data;
       let after = request.resource.data;
-      return ownsBooking(before)
+      return isCustomer()
+        && before.customerUid == request.auth.uid
         && before.status == 'booked'
         && request.time < before.startAt
         && after.diff(before).affectedKeys().hasOnly(['status', 'cancelledAt'])
         && after.status == 'cancelled'
         && after.cancelledAt == request.time
-        && slotsReleased(before, id, minutesOf(before.startTime));
+        && claimsSlots(before, id);
     }
 
-    // Taking a seat (see the top of this file): only for a booking created in this same write,
-    // and only a seat of that booking's `ownerField` (its phone or customerUid). Overwriting an
-    // existing seat is allowed only once it's free (its booking has started, or was cancelled /
-    // marked done / no-show).
+    // The owner moves a booking to another active barber, same day and time. Both barbers' day
+    // docs must name it afterwards, so their rules check the old slots are freed and the new ones
+    // were free (validDayWrite).
+    function validMove(id) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let barber = get(barberPath(after.barberId)).data;
+      return isOwner()
+        && before.status == 'booked'
+        && after.diff(before).affectedKeys().hasOnly(['barberId', 'barberName', 'movedAt'])
+        && validBarberId(after.barberId)
+        && after.barberId != before.barberId
+        && after.movedAt == request.time
+        && barber.active == true
+        && after.barberName == barber.name
+        && claimsSlots(after, id)
+        && claimsSlots(before, id);
+    }
+
+    // ---- Day docs ----
+
+    function validDayWrite(dayId) {
+      let after = request.resource.data;
+      let before = resource == null ? {'booked': {}, 'blocked': {}} : resource.data;
+      return after.keys().hasAll(['barberId', 'date', 'booked', 'blocked'])
+        && after.keys().hasOnly(['barberId', 'date', 'booked', 'blocked', 'lastBookingId', 'bookingAt'])
+        && validBarberId(after.barberId)
+        && validDate(after.date)
+        && dayId == after.barberId + '_' + after.date
+        && after.booked is map && after.blocked is map
+        && (after.booked == before.booked
+            ? validBlockChange(after)
+            : validBookedChange(after, before, after.lastBookingId));
+    }
+
+    // Blocking and unblocking: the barber himself or the owner, `blocked` only. Blocking over a
+    // booked slot changes nothing for that booking.
+    function validBlockChange(after) {
+      return actsFor(after.barberId)
+        && (resource == null
+            ? !('lastBookingId' in after) && !('bookingAt' in after)
+            : after.diff(resource.data).affectedKeys().hasOnly(['blocked']));
+    }
+
+    // `booked` changes only together with booking `id` in the same transaction: its slots are
+    // added (new booking, or moved here) or removed (cancelled, or moved away), exactly them.
+    function validBookedChange(after, before, id) {
+      let b = getAfter(bookingPath(id)).data;
+      let start = minutesOf(b.startTime);
+      let keys = slotKeys(b, start);
+      let change = after.booked.diff(before.booked);
+      return after.bookingAt == request.time
+        && after.blocked == before.blocked
+        && b.date == after.date
+        && (slotsAdded(after, change, b, id, start, keys)
+            || slotsRemoved(after, before, change, b, id, start, keys));
+    }
+
+    // Only new keys (a taken slot would be a changed key), exactly booking `b`'s, all holding it.
+    // A new booking for this barber, or one moved here; customers can't take blocked time.
+    function slotsAdded(after, change, b, id, start, keys) {
+      return change.removedKeys().size() == 0 && change.changedKeys().size() == 0
+        && change.addedKeys().hasAll(keys) && change.addedKeys().hasOnly(keys)
+        && slotsHold(after.booked, b, id, start)
+        && b.status == 'booked'
+        && b.barberId == after.barberId
+        && (b.createdAt == request.time || b.movedAt == request.time)
+        && (!isCustomer() || !after.blocked.keys().hasAny(keys));
+    }
+
+    // Exactly booking `b`'s keys go, which held it: it's cancelled in this write, or moved from
+    // this barber to another.
+    function slotsRemoved(after, before, change, b, id, start, keys) {
+      let old = get(bookingPath(id)).data;
+      return change.addedKeys().size() == 0 && change.changedKeys().size() == 0
+        && change.removedKeys().hasAll(keys) && change.removedKeys().hasOnly(keys)
+        && slotsHold(before.booked, b, id, start)
+        && old.barberId == after.barberId
+        && ((old.status == 'booked' && b.status == 'cancelled' && b.barberId == after.barberId)
+            || (b.movedAt == request.time && b.barberId != after.barberId));
+    }
+
+    // ---- Settings ----
+
+    // One weekday of shop opening hours (minutes, no breaks): closed, or open on the 15-min grid
+    // within the day. Like validBarberDay, it checks only what bookings and barbers' hours rely on
+    // (7 days of full shape checks would take most of the write's 1000 expressions): missing or
+    // mistyped times fail the comparisons, and a `closed` that isn't a bool never passes the
+    // `closed == false` the other rules ask for.
+    function validOpening(d) {
+      return d.closed == true
+        || (d.open >= 0 && d.close <= 1440 && d.open < d.close
+            && d.open % 15 == 0 && d.close % 15 == 0);
+    }
+
+    function validSpecialPeriod(periods, i) {
+      return periods.size() <= i || (
+        periods[i].startDay is int && periods[i].endDay is int
+        && periods[i].daysAhead is int && periods[i].daysAhead >= 1 && periods[i].daysAhead <= 60
+      );
+    }
+
+    // Trimmed, 2 to 40 characters (MIN/MAX_SHOP_NAME_LENGTH in src/config.ts).
+    function validShopName(name) {
+      return name is string && name == name.trim() && name.size() >= 2 && name.size() <= 40;
+    }
+
+    // Shape of settings/shop (see src/lib/shopDoc.ts). Anything the booking checks read but this
+    // doesn't cover (like a service's fields, or its optional price, which bookings never read)
+    // makes those checks fail, which refuses bookings rather than letting bad ones through.
+    // The Maps link goes in an href, so it must be https, never a `javascript:` URL.
+    function validShop(s) {
+      let fields = ['shopName', 'openingHours', 'services', 'bookingWindowDays', 'specialPeriods',
+                    'periodDays', 'closedDays', 'whatsapp', 'shopAddress', 'mapsUrl', 'updatedAt'];
+      return s.keys().hasAll(fields) && s.keys().hasOnly(fields)
+        && validShopName(s.shopName)
+        && s.openingHours is list && s.openingHours.size() == 7
+        && validOpening(s.openingHours[0]) && validOpening(s.openingHours[1])
+        && validOpening(s.openingHours[2]) && validOpening(s.openingHours[3])
+        && validOpening(s.openingHours[4]) && validOpening(s.openingHours[5])
+        && validOpening(s.openingHours[6])
+        && s.services is map
+        && s.bookingWindowDays is int && s.bookingWindowDays >= 1 && s.bookingWindowDays <= 60
+        && s.specialPeriods is list && s.specialPeriods.size() <= 4
+        && validSpecialPeriod(s.specialPeriods, 0) && validSpecialPeriod(s.specialPeriods, 1)
+        && validSpecialPeriod(s.specialPeriods, 2) && validSpecialPeriod(s.specialPeriods, 3)
+        // Derived from specialPeriods by the page; 4 periods of at most 90 days.
+        && s.periodDays is map && s.periodDays.size() <= 360
+        && s.closedDays is list
+        && (s.whatsapp == '' || validPhone(s.whatsapp))
+        && s.shopAddress is string && s.shopAddress.size() <= 200
+        && s.mapsUrl is string && s.mapsUrl.size() <= 500
+        && (s.mapsUrl == '' || s.mapsUrl.matches('https://[^ ]+'))
+        && s.updatedAt == request.time;
+    }
+
+    // Shape of settings/branding. The logo is null (shop name only) or a WebP/JPEG/PNG data: URL
+    // of at most 140,000 characters (MAX_LOGO_DATA_URL_LENGTH; isLogoDataUrl in src/lib/logo.ts).
+    // SVG is refused: it can carry scripts.
+    function validBranding(b) {
+      return b.keys().hasAll(['logo', 'colors', 'updatedAt'])
+        && b.keys().hasOnly(['logo', 'colors', 'updatedAt'])
+        && (b.logo == null || (b.logo is string && b.logo.size() <= 140000
+            && b.logo.matches('data:image/(webp|jpeg|png);base64,[A-Za-z0-9+/]+={0,2}')))
+        && b.colors is map
+        && b.colors.keys().hasAll(['dark', 'accent', 'light'])
+        && b.colors.keys().hasOnly(['dark', 'accent', 'light'])
+        && validColor(b.colors.dark) && validColor(b.colors.accent) && validColor(b.colors.light)
+        && b.updatedAt == request.time;
+    }
+
+    function validColor(c) {
+      return c is string && c.matches('#[0-9A-Fa-f]{6}');
+    }
+
+    // ---- Barbers ----
+
+    // Shape of barbers/{id} (see src/lib/barberDoc.ts), apart from the hours (validWeek). Names
+    // trimmed, 2 to 30 characters.
+    function validBarber(b) {
+      let fields = ['name', 'active', 'order', 'weeklyHours', 'daysOff', 'updatedAt'];
+      return b.keys().hasAll(fields) && b.keys().hasOnly(fields)
+        && b.name is string && b.name == b.name.trim() && b.name.size() >= 2 && b.name.size() <= 30
+        && b.active is bool
+        && b.order is int
+        && b.weeklyHours is list && b.weeklyHours.size() == 7
+        && b.daysOff is list
+        && b.updatedAt == request.time;
+    }
+
+    // One weekday of a barber's hours: closed, or open on the 15-min grid inside the shop's hours
+    // that weekday (`o`), with at most 2 breaks (a third would go unchecked by barberOpenDuring).
+    // This is most of what saving a barber costs (each comparison is ~5 expressions, times 7
+    // days), so it checks only what bookings rely on: missing or mistyped fields fail the
+    // comparisons, a closed day's times are never read, and a `closed` that isn't a bool never
+    // passes the booking rule's `closed == false`. hoursOutsideShop in src/lib/barberSchedule.ts is
+    // the page's version.
+    function validBarberDay(d, o) {
+      return d.closed == true
+        || (o.closed == false && d.open >= o.open && d.close <= o.close && d.open < d.close
+            && d.open % 15 == 0 && d.close % 15 == 0 && d.breaks.size() <= 2);
+    }
+
+    // A barber's week of hours: every weekday valid and inside the shop's opening hours.
+    // Bookings check the shop's hours too, in case those shrink later.
+    function validWeek(hours) {
+      let o = settings().openingHours;
+      return validBarberDay(hours[0], o[0]) && validBarberDay(hours[1], o[1])
+        && validBarberDay(hours[2], o[2]) && validBarberDay(hours[3], o[3])
+        && validBarberDay(hours[4], o[4]) && validBarberDay(hours[5], o[5])
+        && validBarberDay(hours[6], o[6]);
+    }
+
+    // The owner changes anything; the barber himself only his hours and days off. Hours are
+    // checked only when they change, so the owner can still deactivate a barber whose hours
+    // stick out after the shop's shrank.
+    function validBarberUpdate(barberId) {
+      let after = request.resource.data;
+      let changed = after.diff(resource.data).affectedKeys();
+      let st = me();
+      return actsForDoc(st, barberId)
+        && (isOwnerDoc(st) || changed.hasOnly(['weeklyHours', 'daysOff', 'updatedAt']))
+        && validBarber(after)
+        && (!('weeklyHours' in changed) || validWeek(after.weeklyHours));
+    }
+
+    // ---- Staff logins ----
+
+    function validUsername(username) {
+      return username is string && username.matches('^[a-z0-9]{3,20}$');
+    }
+
+    // A barber login the owner creates (only barbers: the shop's one owner is set up by hand in
+    // the Firebase console). Its username doc must point at it in the same write.
+    function validNewStaff(uid) {
+      let st = request.resource.data;
+      let fields = ['username', 'barberId', 'role', 'active', 'createdAt'];
+      return st.keys().hasAll(fields) && st.keys().hasOnly(fields)
+        && st.role == 'barber'
+        && st.active == true
+        && st.createdAt == request.time
+        && validUsername(st.username)
+        && validBarberId(st.barberId)
+        && exists(barberPath(st.barberId))
+        && getAfter(usernamePath(st.username)).data.uid == uid;
+    }
+
+    // The owner turns a barber login off or on, nothing else, and never his own. Turning one back
+    // on only while its username still points at it: after "New login", the old one stays off.
+    function validStaffUpdate(uid) {
+      let after = request.resource.data;
+      return uid != request.auth.uid
+        && resource.data.role == 'barber'
+        && after.diff(resource.data).affectedKeys().hasOnly(['active'])
+        && after.active is bool
+        && (after.active == false || get(usernamePath(resource.data.username)).data.uid == uid);
+    }
+
+    // usernames/{username} -> a barber login created in this same write. The internal email is
+    // "<username>.<4 random characters>@staff.invalid" (docs/ARCHITECTURE.md, 5.1).
+    function validLogin(username) {
+      let u = request.resource.data;
+      let st = getAfter(staffPath(u.uid)).data;
+      return validUsername(username)
+        && u.keys().hasAll(['uid', 'email']) && u.keys().hasOnly(['uid', 'email'])
+        && u.uid is string
+        && u.email is string && u.email.matches(username + '[.][a-z0-9]{4}@staff[.]invalid')
+        && st.username == username && st.role == 'barber' && st.active == true
+        && st.createdAt == request.time;
+    }
+
+    // "New login" (forgotten password): the username moves to a new login of the same barber,
+    // and the old login is turned off in the same write. Never the owner's own username.
+    function validNewLogin(username) {
+      let old = getAfter(staffPath(resource.data.uid)).data;
+      return resource.data.uid != request.auth.uid
+        && validLogin(username)
+        && old.active == false
+        && old.barberId == getAfter(staffPath(request.resource.data.uid)).data.barberId;
+    }
+
+    // ---- Seats and customers (as in the single-barber rules) ----
+
+    // Taking a seat: only for a booking created in this same write, and only a seat of that
+    // booking's `ownerField` (its phone or customerUid). Overwriting an existing seat is allowed
+    // only once it's free (its booking has started, or was cancelled / marked done / no-show).
     function validSeatClaim(seatId, ownerField) {
       let seat = request.resource.data;
       let b = getAfter(bookingPath(seat.bookingId)).data;
@@ -292,125 +616,72 @@ service cloud.firestore {
             || get(bookingPath(resource.data.bookingId)).data.status != 'booked');
     }
 
-    // A booking's slot: only for booking `b` created in this same write (its createdAt is this
-    // request's time), on its date, and one of the slots it occupies.
-    function validBookingSlot(slotId, slot, b) {
-      return slot.keys().hasAll(['bookingId', 'date']) && slot.keys().hasOnly(['bookingId', 'date'])
-        && b.createdAt == request.time
-        && b.date == slot.date
-        && coversSlot(b, slotId, minutesOf(b.startTime));
-    }
-
-    // A blocked slot: {date, blocked: true}, with an ID on the 15-min grid of that date.
-    function validBlock(slotId) {
-      let slot = request.resource.data;
-      return isAdmin()
-        && slot.keys().hasAll(['date', 'blocked']) && slot.keys().hasOnly(['date', 'blocked'])
-        && slot.blocked == true
-        && validDate(slot.date)
-        && slotId.matches('^' + slot.date + '_([01][0-9]|2[0-3])(00|15|30|45)$');
-    }
-
-    // One weekday of settings.weeklyHours. A third break would go unchecked (openDuring).
-    function validDayHours(d) {
-      return d.keys().hasAll(['closed', 'open', 'close', 'breaks'])
-        && d.keys().hasOnly(['closed', 'open', 'close', 'breaks'])
-        && d.closed is bool && d.open is int && d.close is int
-        && d.open % 15 == 0 && d.close % 15 == 0 && d.open >= 0 && d.close <= 1440
-        && d.breaks is list && d.breaks.size() <= 2;
-    }
-
-    function validSpecialPeriod(periods, i) {
-      return periods.size() <= i || (
-        periods[i].startDay is int && periods[i].endDay is int
-        && periods[i].daysAhead is int && periods[i].daysAhead >= 1 && periods[i].daysAhead <= 60
-      );
-    }
-
-    // The shop address and Google Maps link (both optional: older settings don't have them).
-    // The link goes in an href on the confirmation page, so it must be https, never a
-    // `javascript:` URL. Limits match src/config.ts.
-    function validShopInfo(s) {
-      return (!('shopAddress' in s) || (s.shopAddress is string && s.shopAddress.size() <= 200))
-        && (!('mapsUrl' in s) || (s.mapsUrl is string && s.mapsUrl.size() <= 500
-            && (s.mapsUrl == '' || s.mapsUrl.matches('https://[^ ]+'))));
-    }
-
-    // Shape of settings/shop (see src/lib/settingsDoc.ts). Anything the booking checks read but
-    // this doesn't cover (like a service's fields, or its optional price, which bookings never
-    // read) makes those checks fail, which refuses bookings rather than letting bad ones through.
-    function validSettings(s) {
-      let fields = ['barberName', 'weeklyHours', 'services', 'bookingWindowDays', 'specialPeriods',
-                    'daysOff', 'updatedAt'];
-      return s.keys().hasAll(fields)
-        && s.keys().hasOnly(['barberName', 'weeklyHours', 'services', 'bookingWindowDays',
-                             'specialPeriods', 'daysOff', 'updatedAt', 'shopAddress', 'mapsUrl'])
-        && validShopInfo(s)
-        && s.barberName is string
-        && s.weeklyHours is list && s.weeklyHours.size() == 7
-        && validDayHours(s.weeklyHours[0]) && validDayHours(s.weeklyHours[1])
-        && validDayHours(s.weeklyHours[2]) && validDayHours(s.weeklyHours[3])
-        && validDayHours(s.weeklyHours[4]) && validDayHours(s.weeklyHours[5])
-        && validDayHours(s.weeklyHours[6])
-        && s.services is map
-        && s.bookingWindowDays is int && s.bookingWindowDays >= 1 && s.bookingWindowDays <= 60
-        && s.specialPeriods is list && s.specialPeriods.size() <= 4
-        && validSpecialPeriod(s.specialPeriods, 0) && validSpecialPeriod(s.specialPeriods, 1)
-        && validSpecialPeriod(s.specialPeriods, 2) && validSpecialPeriod(s.specialPeriods, 3)
-        && s.daysOff is list
-        && s.updatedAt == request.time;
-    }
+    // ---- Collections ----
 
     match /settings/{docId} {
       allow read: if true;
-      allow create, update: if isAdmin() && docId == 'shop' && validSettings(request.resource.data);
+      allow create, update: if isOwner() && (
+        (docId == 'shop' && validShop(request.resource.data))
+        || (docId == 'branding' && validBranding(request.resource.data)));
+    }
+
+    match /barbers/{barberId} {
+      allow read: if true;
+      allow create: if isOwner() && validBarberId(barberId)
+        && validBarber(request.resource.data) && validWeek(request.resource.data.weeklyHours);
+      allow update: if isPasswordUser() && validBarberUpdate(barberId);
+      // Barbers are deactivated, never deleted: their bookings keep pointing at them.
+    }
+
+    match /days/{dayId} {
+      allow read: if true;
+      allow create, update: if validDayWrite(dayId);
     }
 
     match /bookings/{bookingId} {
-      // A customer may also get a code nobody uses yet (to pick a free one); that only
-      // tells them the code is free, never anything about someone else's booking.
-      allow get: if isAdmin() || (isCustomer() && (resource == null || ownsBooking(resource.data)));
-      // Customers may only list with a `customerUid == their UID` filter.
-      allow list: if isAdmin() || ownsBooking(resource.data);
-      allow create: if validAdminBooking(bookingId) || validCustomerBooking(bookingId);
-      allow update: if validAdminUpdate() || validCancel(bookingId);
+      // A customer or staff member may also get a code nobody uses yet (to pick a free one); that
+      // only tells them the code is free, never anything about someone else's booking.
+      allow get: if (isCustomer() && (resource == null || resource.data.customerUid == request.auth.uid))
+        || (isPasswordUser() && (resource == null ? me().active == true
+                                                  : actsForDoc(me(), resource.data.barberId)));
+      // Customers may only list with a `customerUid == their UID` filter, barbers with
+      // `barberId == theirs`.
+      allow list: if (isCustomer() && resource.data.customerUid == request.auth.uid)
+        || (isPasswordUser() && actsForDoc(me(), resource.data.barberId));
+      allow create: if validStaffBooking(bookingId) || validCustomerBooking(bookingId);
+      allow update: if validStatusUpdate(bookingId) || validCancel(bookingId) || validMove(bookingId);
       allow delete: if false;
     }
 
-    match /slots/{slotId} {
-      allow read: if true;
+    match /staff/{uid} {
+      allow get: if (request.auth != null && request.auth.uid == uid) || isOwner();
+      allow list: if isOwner();
+      allow create: if isOwner() && validNewStaff(uid);
+      allow update: if isOwner() && validStaffUpdate(uid);
+    }
 
-      // For a booking created in the same write, or a time Eddy blocks. A slot that already
-      // exists can't be "created": that write is an update, which is denied, so nobody (Eddy
-      // included) can take over a booked or blocked slot.
-      allow create: if validBlock(slotId) || validBookingSlot(
-        slotId, request.resource.data, getAfter(bookingPath(request.resource.data.bookingId)).data);
-
-      allow update: if false;
-
-      // Eddy can delete any (unblocking, or cleaning up). Otherwise only when its booking goes
-      // from "booked" to "cancelled" in this same write.
-      allow delete: if isAdmin() || (
-        get(bookingPath(resource.data.bookingId)).data.status == 'booked'
-        && getAfter(bookingPath(resource.data.bookingId)).data.status == 'cancelled'
-      );
+    match /usernames/{username} {
+      // The login form looks a username up before signing in. Nobody can list them.
+      allow get: if true;
+      allow create: if isOwner() && validLogin(username);
+      allow update: if isOwner() && validNewLogin(username);
     }
 
     match /phoneLimits/{seatId} {
       // Customers can't read these: they hold booking codes of whoever used that phone.
-      allow read: if isAdmin();
+      allow read: if isOwner();
       allow create, update: if isCustomer() && validSeatClaim(seatId, 'phone');
     }
 
     match /userLimits/{seatId} {
       // A customer may read their own two seats, to pick a free one.
-      allow get: if isAdmin()
-        || (isCustomer() && (seatId == request.auth.uid + '_1' || seatId == request.auth.uid + '_2'));
+      allow get: if (isCustomer() && (seatId == request.auth.uid + '_1' || seatId == request.auth.uid + '_2'))
+        || isOwner();
       allow create, update: if isCustomer() && validSeatClaim(seatId, 'customerUid');
     }
 
     match /customers/{uid} {
-      allow get: if isAdmin() || (isCustomer() && request.auth.uid == uid);
+      allow get: if (isCustomer() && request.auth.uid == uid) || isOwner();
       allow create, update: if isCustomer() && request.auth.uid == uid
         && request.resource.data.keys().hasAll(['name', 'phone', 'updatedAt'])
         && request.resource.data.keys().hasOnly(['name', 'phone', 'updatedAt'])

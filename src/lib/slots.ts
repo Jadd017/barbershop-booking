@@ -1,6 +1,6 @@
 import { SLOT_MINUTES } from '../config';
-import type { DateKey, Settings, StartTimeOption, TimeString } from '../types';
-import { fitsHours, hoursOn } from './schedule';
+import type { DateKey, DayHours, Settings, StartTimeOption, TimeString } from '../types';
+import { fitsDayHours, hoursOn } from './schedule';
 import { minutesToTime, timeToMinutes, toDateKey } from './time';
 
 /** Every grid slot a service of `durationMinutes` starting at `start` occupies. */
@@ -35,7 +35,17 @@ export function getStartTimes(
   takenSlots: ReadonlySet<TimeString>,
   now: Date = new Date(),
 ): StartTimeOption[] {
-  const hours = hoursOn(settings, date);
+  return startTimesWithin(date, durationMinutes, hoursOn(settings, date), takenSlots, now);
+}
+
+/** getStartTimes for one day's `hours` (null: closed that day). */
+export function startTimesWithin(
+  date: DateKey,
+  durationMinutes: number,
+  hours: DayHours | null,
+  takenSlots: ReadonlySet<TimeString>,
+  now: Date = new Date(),
+): StartTimeOption[] {
   if (!hours) return [];
   const open = timeToMinutes(hours.start);
   const close = timeToMinutes(hours.end);
@@ -50,7 +60,7 @@ export function getStartTimes(
 
     const time = minutesToTime(start);
     const available =
-      fitsHours(settings, date, time, durationMinutes) &&
+      fitsDayHours(hours, time, durationMinutes) &&
       !slotsNeeded(time, durationMinutes).some((slot) => takenSlots.has(slot)) &&
       !isPast(date, time, now);
 
