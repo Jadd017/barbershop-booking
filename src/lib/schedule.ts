@@ -13,7 +13,7 @@ import {
   MAX_SPECIAL_PERIODS,
   SLOT_MINUTES,
 } from '../config';
-import i18n, { dateLocale } from '../i18n';
+import i18n, { dateLocale, timeRange } from '../i18n';
 import type { DateKey, DayHours, Service, Settings, SpecialPeriod, TimeString } from '../types';
 import { isSafeLink } from './shop';
 import { dayNumber, fromDateKey, timeToMinutes, toDateKey, upcomingDateKeys } from './time';
@@ -114,8 +114,8 @@ type WeekdayHours = Pick<DayHours, 'closed' | 'start' | 'end'> & { breaks?: DayH
 
 function describeDay(hours: WeekdayHours): string {
   if (hours.closed) return i18n.t('schedule.closed');
-  const breaks = (hours.breaks ?? []).map((b) => `${b.start}–${b.end}`).join(', ');
-  const open = `${hours.start}–${hours.end}`;
+  const breaks = (hours.breaks ?? []).map((b) => timeRange(b.start, b.end)).join(', ');
+  const open = timeRange(hours.start, hours.end);
   return breaks ? i18n.t('schedule.withBreak', { hours: open, breaks }) : open;
 }
 

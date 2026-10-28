@@ -100,8 +100,10 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
         <div className="mb-6 rounded-2xl border border-line bg-card p-4">
           <p className="caps text-sm font-semibold">{formatDayLong(booking.date)}</p>
           <p className="caps text-2xl font-semibold tabular-nums">
-            {booking.startTime}
-            <span className="text-base font-normal text-muted">–{end}</span>
+            <bdi dir="ltr">
+              {booking.startTime}
+              <span className="text-base font-normal text-muted">–{end}</span>
+            </bdi>
           </p>
           <p className="text-lg font-semibold">{booking.name}</p>
           <p className="text-sm text-muted">

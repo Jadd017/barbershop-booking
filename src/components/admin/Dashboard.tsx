@@ -2,7 +2,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Coffee, Lock } from 'lucide-rea
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
-import i18n from '../../i18n';
+import i18n, { timeRange } from '../../i18n';
 import { subscribeBookingsOn } from '../../data/bookings';
 import { subscribeDay, subscribeDaysOn } from '../../data/days';
 import { store } from '../../data/firebase';
@@ -351,7 +351,7 @@ function BarberColumn({ shop, barber, self, heading, date, mode, nowMinutes, boo
               {counts
                 ? t('dashboard.counts', { bookings: counts.bookings, done: counts.done, free: counts.freeSlots })
                 : t('common.loading')}
-              {hours && ` · ${hours.start}–${hours.end}`}
+              {hours && ` · ${timeRange(hours.start, hours.end)}`}
             </p>
           </div>
         </div>
@@ -435,10 +435,12 @@ function UpNextCard({ booking, nowMinutes }: { booking: ShopStaffBooking; nowMin
         <StatusChip status={booking.status} />
       </div>
       <p className="caps text-4xl font-semibold tabular-nums">
-        {booking.startTime}
-        <span className="text-xl font-medium text-muted">
-          –{minutesToTime(endOf(booking))}
-        </span>
+        <bdi dir="ltr">
+          {booking.startTime}
+          <span className="text-xl font-medium text-muted">
+            –{minutesToTime(endOf(booking))}
+          </span>
+        </bdi>
       </p>
       <p className="text-2xl font-semibold">{booking.name}</p>
       <p className="mb-4 text-muted">

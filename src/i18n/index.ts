@@ -47,6 +47,16 @@ export function dateLocale(): string {
   return currentLanguage() === 'ar' ? 'ar-LB-u-nu-latn' : 'en-US';
 }
 
+/**
+ * "10:00–20:00". In Arabic it's wrapped in a left-to-right isolate (U+2066 … U+2069): in
+ * right-to-left text the browser would otherwise show the end time first ("20:00–10:00"). The
+ * Arabic strings wrap their own {{start}}–{{end}} the same way.
+ */
+export function timeRange(start: string, end: string): string {
+  const range = `${start}–${end}`;
+  return currentLanguage() === 'ar' ? `⁦${range}⁩` : range;
+}
+
 const CAIRO_URL = 'https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&display=swap';
 
 /** Adds the Cairo stylesheet once, the first time Arabic is shown. */

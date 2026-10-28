@@ -26,6 +26,7 @@ import {
 import { useCustomer } from '../hooks/useCustomer';
 import { ServicesContext, useBookingServiceName } from '../hooks/useServiceNames';
 import { useShop } from '../hooks/useShop';
+import { timeRange } from '../i18n';
 import { clearLastBooking, loadLastBooking } from '../lib/lastBooking';
 import { isPast } from '../lib/slots';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../lib/time';
@@ -224,9 +225,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
           <p className="caps text-lg font-semibold">{formatDayLong(booking.date)}</p>
           <p className="flex items-center gap-1.5 text-sm">
             <Clock aria-hidden size={14} className="text-muted" />
-            <span className="tabular-nums">
-              {booking.startTime}–{end}
-            </span>
+            <span className="tabular-nums">{timeRange(booking.startTime, end)}</span>
           </p>
           <p className="flex items-center gap-1.5 text-sm">
             <Scissors aria-hidden size={14} className="text-muted" />

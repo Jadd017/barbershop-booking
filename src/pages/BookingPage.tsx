@@ -24,7 +24,7 @@ import { clearLastBooking, loadLastBooking, saveLastBooking, type LastBooking } 
 import { clearPendingBooking, loadPendingBooking, savePendingBooking } from '../lib/pendingBooking';
 import { weeklyHoursSummary } from '../lib/schedule';
 import { formatPrice, localServiceName } from '../lib/shop';
-import { dateLocale } from '../i18n';
+import { dateLocale, timeRange } from '../i18n';
 import { fromDateKey, minutesToTime, timeToMinutes, toDateKey } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
 import type { DateKey, ShopConfirmedBooking, TimeString } from '../types';
@@ -271,7 +271,7 @@ export function BookingPage() {
                   month: 'short',
                   day: 'numeric',
                 })}{' '}
-                · <span className="tabular-nums">{selectedTime}–{end}</span>
+                · <span className="tabular-nums">{timeRange(selectedTime, end)}</span>
               </p>
               {!onlyBarber && (
                 <p className="truncate text-line">

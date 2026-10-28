@@ -29,8 +29,10 @@ export function BookingCard({ booking, showDate = false, cancelOnly = false }: P
         <div>
           {showDate && <p className="caps text-sm font-semibold">{formatDayLong(booking.date)}</p>}
           <p className="caps text-xl font-semibold tabular-nums">
-            {booking.startTime}
-            <span className="text-base font-normal text-muted">–{end}</span>
+            <bdi dir="ltr">
+              {booking.startTime}
+              <span className="text-base font-normal text-muted">–{end}</span>
+            </bdi>
           </p>
           <p className="text-sm text-muted">
             {serviceName(booking)} · {t('common.minutes', { minutes: booking.durationMinutes })}

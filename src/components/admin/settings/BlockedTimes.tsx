@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import i18n from '../../../i18n';
+import i18n, { timeRange } from '../../../i18n';
 import { subscribeBookingsOn } from '../../../data/bookings';
 import { blockTime, subscribeBlockedTimes, unblockTime } from '../../../data/days';
 import { store } from '../../../data/firebase';
@@ -124,9 +124,7 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
             >
               <span className="text-sm font-medium">
                 {formatDayLong(range.date)} ·{' '}
-                <span className="tabular-nums">
-                  {range.start}–{range.end}
-                </span>
+                <span className="tabular-nums">{timeRange(range.start, range.end)}</span>
               </span>
               <button
                 type="button"

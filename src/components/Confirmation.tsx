@@ -2,6 +2,7 @@ import { CalendarDays, Check, Copy, MapPin, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
+import { timeRange } from '../i18n';
 import { bookingServiceName, formatPrice, isSafeLink } from '../lib/shop';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
@@ -46,7 +47,7 @@ export function Confirmation({ booking, shopName, whatsapp, mapsUrl, shopAddress
       ? [[t('confirmation.price'), formatPrice(booking.price)] as [string, string]]
       : []),
     [t('confirmation.day'), formatDayLong(booking.date)],
-    [t('confirmation.time'), `${booking.startTime}–${end}`],
+    [t('confirmation.time'), timeRange(booking.startTime, end)],
   ];
 
   return (
