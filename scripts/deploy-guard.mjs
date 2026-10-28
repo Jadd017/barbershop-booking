@@ -5,7 +5,7 @@
 // the clean, frozen copy of the commit deploy.mjs checked (DEPLOY_COMMIT), which must be the
 // multi-barber code, with a build (dist/) that has that shop's config and no other.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { bundleProblems, codeProblems, foreignValues, readBuild, uncommittedProblems } from './deployChecks.mjs';
 import { deployRefusal, shopAliases } from './deployTargets.mjs';
 import { readShop } from './shops.mjs';
@@ -26,7 +26,9 @@ function refusal() {
   }
   const problems = [...uncommittedProblems(git(['status', '--porcelain'])), ...codeProblems('.')];
   // Hosting uploads dist/: it must be this shop's build.
-  const firebaseJson = JSON.parse(readFileSync(`firebase.${shop}.json`, 'utf8'));
+  const configFile = `firebase.${shop}.json`;
+  if (!existsSync(configFile)) return `${configFile} is missing: \`npm run deploy -- ${shop}\` writes it in its copy.`;
+  const firebaseJson = JSON.parse(readFileSync(configFile, 'utf8'));
   if (firebaseJson.hosting) {
     const { env } = readShop(shop);
     problems.push(...bundleProblems(readBuild(firebaseJson.hosting.public), env, foreignValues('.', shop)));
