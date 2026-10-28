@@ -1,54 +1,100 @@
-# Eddy's Barbershop — Online Booking
+# Barbershop Booking — multi-barber, multi-shop
 
-A real booking system built for a working one-chair barbershop in Beirut. Customers pick a
-service, a day and a free time on their phone, sign in with Google, and send the booking to the
-barber on WhatsApp; the barber runs his day from a mobile dashboard: who's up next, walk-ins,
-opening hours, prices and days off. Every rule (no double bookings, opening hours, booking
-limits) is enforced on the server by Firestore security rules, not just in the browser.
+An online booking system for barbershops in Beirut, in English and Arabic. Customers pick a
+service, a barber (or "any barber"), a day and a free time on their phone, sign in with Google,
+and send the booking to the shop on WhatsApp. Each barber runs his own day from a mobile
+dashboard; the owner also sees every barber's day, manages the team and their logins, and sets
+the shop's hours, services, prices, logo and colors. Every rule (no double bookings, each
+barber's hours, booking limits) is enforced on the server by Firestore security rules, not just
+in the browser.
 
-**Live:** [eddy-barbershop.web.app](https://eddy-barbershop.web.app)
+One codebase serves many shops: each shop is its own Firebase project with its own config in
+`shops/<shop>/` (see [Adding a new shop](#adding-a-new-shop)).
 
 ## Screenshots
 
-<p>
-  <img src="docs/screenshots/booking.png" alt="Booking page: services with prices" width="260">
-  <img src="docs/screenshots/booking-time-selected.png" alt="Day and time picked, with the booking summary bar" width="260">
-  <img src="docs/screenshots/confirmation.png" alt="Confirmation ticket with booking code and WhatsApp button" width="260">
-</p>
+The demo shop on the local emulators (made-up barbers and customers). Regenerate them with
+`npm run screenshots`.
 
-<!-- Barber's dashboard:
-<p>
-  <img src="docs/screenshots/admin-today.png" alt="Barber's dashboard: today, up next" width="260">
-  <img src="docs/screenshots/admin-calendar.png" alt="Calendar view of a day" width="260">
-  <img src="docs/screenshots/admin-walk-in.png" alt="Adding a walk-in" width="260">
-  <img src="docs/screenshots/admin-settings.png" alt="Settings: hours, services and prices" width="260">
-</p>
--->
+**Customers**
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/customer-1-service.webp" alt="Booking page: services with durations and prices" width="250"></td>
+    <td><img src="docs/screenshots/customer-2-barber.webp" alt="Choosing a barber, or any barber" width="250"></td>
+    <td><img src="docs/screenshots/customer-3-time.webp" alt="A day and a free time with one barber, and the booking summary bar" width="250"></td>
+  </tr>
+  <tr>
+    <td align="center">Service</td>
+    <td align="center">Barber or "Any barber"</td>
+    <td align="center">Day and time</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/customer-4-confirmation.webp" alt="Confirmation ticket with booking code and WhatsApp button" width="250"></td>
+    <td><img src="docs/screenshots/customer-5-my-bookings.webp" alt="My bookings: upcoming and past bookings" width="250"></td>
+    <td><img src="docs/screenshots/customer-6-arabic.webp" alt="The booking page in Arabic, right to left" width="250"></td>
+  </tr>
+  <tr>
+    <td align="center">Confirmation</td>
+    <td align="center">My bookings</td>
+    <td align="center">Arabic (right to left)</td>
+  </tr>
+</table>
+
+**Barbers and owner**
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/barber-1-today.webp" alt="A barber's Today: his numbers, up next and the rest of his day" width="250"></td>
+    <td><img src="docs/screenshots/owner-1-barbers.webp" alt="Owner: the barbers and their logins" width="250"></td>
+    <td><img src="docs/screenshots/owner-2-shop-settings.webp" alt="Owner: the shop's settings" width="250"></td>
+  </tr>
+  <tr>
+    <td align="center">Barber: Today</td>
+    <td align="center">Owner: barbers</td>
+    <td align="center">Owner: Settings → Shop</td>
+  </tr>
+</table>
+
+<img src="docs/screenshots/owner-3-all-barbers-desktop.webp" alt="Owner on a computer: every barber's day side by side" width="100%">
+
+<p align="center">Owner on a computer: every barber's day in columns</p>
 
 ## Features
 
 **For customers**
 
-- Services with duration and price, days within the booking window (closed days shown but not
-  selectable), and start times grouped by morning, afternoon and evening.
+- Services with duration and price, then a barber: a named one or "Any barber" (the first one
+  free). Days within the booking window (closed days shown but not selectable), and start times
+  grouped by morning, afternoon and evening, from that barber's own hours, breaks and days off.
 - Live availability: times update in real time as other people book, and times that don't
   leave enough room for the chosen service are faded out.
 - Google sign-in, then name and phone (remembered for next time).
-- A confirmation "ticket" with a booking code, a pre-filled WhatsApp message to the barber, and
-  directions to the shop.
+- A confirmation "ticket" with a booking code, a pre-filled WhatsApp message to the shop, and
+  directions.
 - "My bookings" to see past and upcoming bookings and cancel before the appointment.
+- English or Arabic, switched from any page and remembered on the device. Arabic is fully right
+  to left with the Cairo font, Arabic month names and Arabic service names; phone numbers and
+  booking codes stay left to right.
 
-**For the barber**
+**For barbers**
 
-- A "Today" dashboard: bookings, done and free-slot counts, the next customer with one-tap
-  Done / No-show, call and WhatsApp links, and the rest of the day including breaks and blocked
-  times.
+- Their own login (a username and password). A "Today" dashboard: bookings, done and free-slot
+  counts, the next customer with one-tap Done / No-show, call and WhatsApp links, and the rest
+  of the day including breaks and blocked times.
 - A calendar view of any day, and walk-in or phone bookings that go through the same
   double-booking checks as online ones.
-- Settings: weekly hours with breaks, services with prices, booking window, holiday periods with
-  a longer window, days off, blocked times, shop address and Maps link. Changes show up live on
-  the booking page, and bookings that would clash with new hours are listed for him to handle;
-  nothing is ever cancelled automatically.
+- Their own weekly hours with breaks, days off and blocked times.
+
+**For the owner** (also a barber)
+
+- Every barber's day: the whole shop's numbers, one barber at a time on a phone, all of them in
+  columns on a computer. Bookings can be moved to another barber.
+- Barbers: add, reorder, turn off (their upcoming bookings are listed to move or cancel), and
+  create or reset their logins.
+- The shop: name, opening hours, closed days, services with prices and Arabic names, booking
+  window and holiday periods, WhatsApp number, address and Maps link, logo and colors. Changes
+  show up live on the booking page; nothing is ever cancelled automatically.
 
 ## Tech stack
 
@@ -117,6 +163,10 @@ npm run emu       # terminal 1: Auth + Firestore emulators
 npm run seed      # terminal 2: a demo shop: owner "tony" + 5 barbers, password "password1"
 npm run dev       # http://localhost:5173 (customers), /admin (staff)
 ```
+
+`npm run screenshots` retakes the pictures above (`docs/screenshots/`) with Playwright, from the
+demo shop on the emulators (it starts its own if `npm run emu` isn't running). The first time,
+install its browser: `npx playwright install chromium`.
 
 Details, and click-through checklists for customers, barbers and the owner, are in
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
