@@ -107,36 +107,62 @@ The demo shop on the local emulators (made-up barbers and customers). Regenerate
 
 ## How it works
 
-**No double bookings, even under concurrent requests.** The day is a grid of 15-minute slots,
-and every taken slot is its own Firestore document (`slots/{date}_{HHMM}`). A booking is one
-transaction that creates the booking and every slot document it covers. The rules only allow
-slots to be *created*, never overwritten, so if two people grab the same time at once, one
-transaction fails and nothing partial is written. Times the barber blocks are slot documents too.
+**One shop, one Firebase project.** Every shop runs the same code and the same security rules in
+its own free (Spark) Firebase project, so shops never share data, logins or quotas. A shop is a
+folder in this repository (`shops/<shop>/`: its public web config, name and logo); the deploy
+builds the site with that config and refuses a shop that isn't complete. Development and tests
+only ever use the local emulators, on a `demo-` project that can't reach a real one.
+
+**No double bookings, even under concurrent requests.** Each barber's day is one Firestore
+document (`days/{barberId}_{date}`) with a map of taken 15-minute slots, and another of the times
+he blocked. A booking is one transaction that writes the booking, its slots in that barber's day
+and the customer's seats. The rules only let a booking *add* slot keys that weren't there, never
+change one, so if two people grab the same barber and time at once, one write fails and nothing
+partial is saved; the app then retries with fresh data. Different barbers are different
+documents, so they never conflict. One document per barber per day also keeps the booking page
+cheap: it listens to one document for a chosen barber, or one per barber for "Any barber".
+
+**"Any barber".** The browser picks the barber who is free for the whole service and has the
+fewest bookings that day, then the first in the owner's order. The rules don't re-check that
+choice (it would cost a read per barber), but everything else is still enforced for the barber
+picked: his hours, breaks and days off, and his free slots.
 
 **All rules enforced server-side.** The page checks everything for a good experience, but the
-Firestore security rules are what count. A customer booking must match the current settings:
-an existing service with its exact name and length, within that weekday's hours, clear of
-breaks and days off, in the future, inside the booking window (or a holiday period's), with
-only the expected fields. Customers can only see their own bookings, and cancel them only before
-they start. Saved customer details are readable only by their owner and the barber.
+Firestore security rules are what count. A customer booking must match the current settings: an
+existing service with its exact name and length, an active barber under his current name, inside
+both the shop's and that barber's hours, clear of his breaks, his days off and the shop's closed
+days, in the future, inside the booking window (or a holiday period's), with only the expected
+fields. Cancelling a booking must free exactly its slots, and moving one to another barber
+(owner only) must take exactly the same slots in the new barber's day. Customers only see their
+own bookings and can cancel them only before they start.
+
+**Staff logins and roles.** Barbers log in with a username and password: each username maps to
+an internal email/password account (on a `.invalid` domain, so nothing is ever mailed), and a
+`staff/{uid}` record says which barber that login is and whether it's the owner. Each shop has
+exactly one owner. A barber can read and change only his own bookings, hours and days off; the
+owner can do everything, including creating logins for barbers from the dashboard, without being
+signed out (a second, throw-away Firebase instance creates them). Turning a login off takes
+effect at once, even for someone signed in. A forgotten password gets a "New login" with the
+same username, since the free plan can't reset another user's password.
 
 **Rules tuned to Firestore's limits.** Firestore stops evaluating a write after 1,000
-expressions and 10 document reads, and a customer booking is the heaviest write. Settings are
-stored in the shape that's cheapest to check (times as minutes, dates as day numbers, services
-as a map keyed by ID), and shared values are computed once and passed down. A test builds the
-worst-case booking and also re-runs it against padded copies of the rules, to prove it keeps
-about 15% of the expression budget spare.
+expressions and 10 document reads. A customer booking reads 5 documents (shop settings, the
+barber, his day and two seats). Data is stored in the shape that's cheapest to check (times as
+minutes, dates as day numbers, services as a map, holiday windows expanded to a per-day lookup),
+and no rule loops over map keys. Tests build the heaviest valid writes and re-run them against
+padded copies of the rules, to prove a booking keeps about 30% of the expression budget spare,
+and shop settings, adding a barber and moving a booking about 20%.
 
 **Google sign-in with per-account limits.** Each Google account and each phone number can hold
-at most 2 upcoming bookings, enforced with "seat" documents the rules check in the same
-transaction, so the calendar can't be filled from one account. The barber's account is a
-separate email/password login, and admin rights require both his account ID and that sign-in
-method.
+at most 2 upcoming bookings across the shop, enforced with "seat" documents the rules check in
+the same transaction, so the calendar can't be filled from one account. Customers sign in with
+Google and staff with a password, and the rules tell them apart by the sign-in method.
 
 **Hardened hosting.** A strict Content-Security-Policy (only the site's own scripts plus Google
-sign-in and reCAPTCHA), HSTS, `frame-ancestors` / X-Frame-Options, `nosniff`, Referrer-Policy
-and Permissions-Policy, set in `firebase.json`. App Check limits the database to the real
-website, and user-provided links (the Maps link) must be `https://`.
+sign-in, reCAPTCHA and the Arabic font), HSTS, `frame-ancestors` / X-Frame-Options, `nosniff`,
+Referrer-Policy and Permissions-Policy, set in `firebase.json`. App Check limits the database to
+the real website. User-provided links (the Maps link) must be `https://`, and the logo is a
+small image checked by the rules, kept apart from the settings bookings read.
 
 **Time zones.** Bookings are in the shop's time (Asia/Beirut, with daylight saving), whatever
 the visitor's device says, and the rules check each booking's start instant against it.
@@ -148,8 +174,9 @@ npm test             # Vitest: slot grid, availability, schedule, time zone and 
 npm run test:rules   # Firestore rules + data layer against the emulator (needs Java 21+)
 ```
 
-The rules suite (150+ tests) covers double booking, overlapping times, booking limits,
-cancelling, every settings check, who can read what, and the rules-limit margins above.
+The rules suite (140 tests) covers double booking (including several customers booking at once),
+"Any barber", moving and cancelling, booking limits, every settings check, staff roles and
+logins, who can read what, and the rules-limit margins above.
 
 ## Running locally
 
