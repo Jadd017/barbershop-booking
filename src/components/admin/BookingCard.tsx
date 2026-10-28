@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { useBookingServiceName } from '../../hooks/useServiceNames';
 import { formatLebanesePhone } from '../../lib/phone';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../../lib/time';
 import type { ShopStaffBooking } from '../../types';
@@ -13,6 +15,8 @@ interface Props {
 }
 
 export function BookingCard({ booking, showDate = false, cancelOnly = false }: Props) {
+  const { t } = useTranslation();
+  const serviceName = useBookingServiceName();
   const end = minutesToTime(timeToMinutes(booking.startTime) + booking.durationMinutes);
 
   return (
@@ -29,7 +33,7 @@ export function BookingCard({ booking, showDate = false, cancelOnly = false }: P
             <span className="text-base font-normal text-muted">–{end}</span>
           </p>
           <p className="text-sm text-muted">
-            {booking.serviceName} · {booking.durationMinutes} min
+            {serviceName(booking)} · {t('common.minutes', { minutes: booking.durationMinutes })}
           </p>
         </div>
         <StatusChip status={booking.status} />
@@ -44,17 +48,21 @@ export function BookingCard({ booking, showDate = false, cancelOnly = false }: P
 
 /** Name, phone, Google account, code, and whether the customer chose "Any barber". */
 export function BookingDetails({ booking }: { booking: ShopStaffBooking }) {
+  const { t } = useTranslation();
   return (
     <div className="text-sm">
       <p className="text-lg font-semibold">{booking.name}</p>
       <p className="tabular-nums text-ink">
-        {booking.phone ? formatLebanesePhone(booking.phone) : 'No phone'}
+        {booking.phone ? <span dir="ltr">{formatLebanesePhone(booking.phone)}</span> : t('actions.noPhone')}
       </p>
       {booking.customerEmail && <p className="break-all text-muted">{booking.customerEmail}</p>}
-      {!booking.customerEmail && <p className="text-muted">Walk-in or phone booking</p>}
-      {booking.anyBarber && <p className="text-muted">Booked with "Any barber"</p>}
+      {!booking.customerEmail && <p className="text-muted">{t('actions.walkInOrPhone')}</p>}
+      {booking.anyBarber && <p className="text-muted">{t('actions.bookedAny')}</p>}
       <p className="text-muted">
-        Code <span className="caps font-semibold tracking-[0.15em] text-ink">{booking.bookingCode}</span>
+        {t('common.code')}{' '}
+        <span lang="en" dir="ltr" className="caps font-semibold tracking-[0.15em] text-ink">
+          {booking.bookingCode}
+        </span>
       </p>
     </div>
   );

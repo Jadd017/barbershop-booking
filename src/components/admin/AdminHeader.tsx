@@ -1,6 +1,8 @@
 import { LogOut } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useBranding } from '../../hooks/useShop';
+import { LanguageToggle } from '../LanguageToggle';
 import { BarberPole } from '../ui';
 import type { StaffSession } from './session';
 
@@ -16,6 +18,7 @@ interface Props {
 
 /** The dark header of the staff pages: the shop's logo and name, who is signed in, the page. */
 export function AdminHeader({ session, overline, title, wide = false, children }: Props) {
+  const { t } = useTranslation();
   const logo = useBranding()?.logo ?? null;
   return (
     <header className="bg-charcoal text-cream">
@@ -30,14 +33,17 @@ export function AdminHeader({ session, overline, title, wide = false, children }
               {session.barber.name}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={session.onLogout}
-            className="inline-flex min-h-11 shrink-0 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
-          >
-            <LogOut aria-hidden size={16} />
-            Log out
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            <LanguageToggle />
+            <button
+              type="button"
+              onClick={session.onLogout}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
+            >
+              <LogOut aria-hidden size={16} className="rtl:-scale-x-100" />
+              {t('staff.logOut')}
+            </button>
+          </div>
         </div>
         {overline && <p className="mt-2 text-sm text-line">{overline}</p>}
         <h1 className="caps text-4xl font-semibold tracking-[0.1em]">{title}</h1>

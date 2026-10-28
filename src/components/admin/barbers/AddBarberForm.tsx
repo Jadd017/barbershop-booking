@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { MAX_BARBER_NAME_LENGTH, MIN_BARBER_NAME_LENGTH } from '../../../config';
 import {
@@ -25,6 +26,7 @@ import { cardClass, Section } from '../settings/fields';
  * hours until they're changed on his page.
  */
 export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: Barber[] }) {
+  const { t } = useTranslation();
   const [name, setName] = useState('');
   // Suggested from the name until the owner types his own.
   const [username, setUsername] = useState<string | null>(null);
@@ -42,7 +44,7 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
     const trimmed = name.trim();
     const problem =
       trimmed.length < MIN_BARBER_NAME_LENGTH || trimmed.length > MAX_BARBER_NAME_LENGTH
-        ? `The name must be ${MIN_BARBER_NAME_LENGTH} to ${MAX_BARBER_NAME_LENGTH} characters.`
+        ? t('schedule.barberNameLength', { min: MIN_BARBER_NAME_LENGTH, max: MAX_BARBER_NAME_LENGTH })
         : (usernameErrors(login)[0] ?? passwordErrors(password)[0] ?? null);
     if (problem) return setError(problem);
 
@@ -72,10 +74,10 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
     } catch (err) {
       setError(
         err instanceof UsernameTakenError
-          ? `The username "${login}" is taken. Pick another.`
+          ? t('addBarber.usernameTaken', { username: login })
           : err instanceof BarberExistsError
-            ? 'A barber with that name was just added. Check the list.'
-            : "Couldn't add the barber. Check your connection and try again.",
+            ? t('addBarber.justAdded')
+            : t('addBarber.failed'),
       );
       if (!(err instanceof UsernameTakenError)) console.error(err);
     }
@@ -85,26 +87,25 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
   return (
     <div className="mt-8">
       <Section
-        title="Add a barber"
-        description="He starts with the shop's opening hours; set his own on his page afterwards."
+        title={t('addBarber.title')}
+        description={t('addBarber.description')}
       >
         {added && (
           <Notice tone={added.loginFailed ? 'warning' : 'success'} className="mb-3">
             {added.loginFailed ? (
               <>
-                {added.barber.name} was added, but his login couldn't be created.{' '}
+                {t('addBarber.loginFailed', { name: added.barber.name })}{' '}
                 <Link to={`/admin/barbers/${added.barber.id}`} className="font-semibold underline">
-                  Open his page
+                  {t('addBarber.openPage')}
                 </Link>{' '}
-                to try again.
+                {t('addBarber.tryAgain')}
               </>
             ) : (
               <>
-                {added.barber.name} was added. He logs in with the username{' '}
-                <strong>{added.username}</strong> and the password you set, and can change it in his
-                settings.{' '}
+                {t('addBarber.added', { name: added.barber.name })}{' '}
+                <strong dir="ltr">{added.username}</strong> {t('addBarber.addedEnd')}{' '}
                 <Link to={`/admin/barbers/${added.barber.id}`} className="font-semibold underline">
-                  Set his hours
+                  {t('addBarber.setHours')}
                 </Link>
               </>
             )}
@@ -112,7 +113,7 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
         )}
         <form onSubmit={handleSubmit} noValidate className={cardClass}>
           <label className="mb-3 block">
-            <span className="mb-1 block text-sm font-medium">Name</span>
+            <span className="mb-1 block text-sm font-medium">{t('common.name')}</span>
             <input
               type="text"
               autoComplete="off"
@@ -125,10 +126,11 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
           </label>
           <label className="mb-3 block">
             <span className="mb-1 block text-sm font-medium">
-              Username <span className="font-normal text-muted">(3–20 letters and digits)</span>
+              {t('addBarber.username')} <span className="font-normal text-muted">{t('addBarber.usernameHint')}</span>
             </span>
             <input
               type="text"
+              dir="ltr"
               autoComplete="off"
               autoCapitalize="none"
               autoCorrect="off"
@@ -142,10 +144,12 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
           </label>
           <label className="mb-4 block">
             <span className="mb-1 block text-sm font-medium">
-              First password <span className="font-normal text-muted">(at least {MIN_PASSWORD_LENGTH} characters)</span>
+              {t('addBarber.firstPassword')}{' '}
+              <span className="font-normal text-muted">{t('addBarber.passwordHint', { min: MIN_PASSWORD_LENGTH })}</span>
             </span>
             <input
               type="text"
+              dir="ltr"
               autoComplete="off"
               spellCheck={false}
               value={password}
@@ -154,7 +158,7 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
               className={`${inputBase} w-full`}
             />
             <span className="mt-1 block text-sm text-muted">
-              Shown so you can give it to him. He should change it after his first login.
+              {t('addBarber.passwordShown')}
             </span>
           </label>
           {error && (
@@ -163,7 +167,7 @@ export function AddBarberForm({ shop, barbers }: { shop: ShopSettings; barbers: 
             </Notice>
           )}
           <button type="submit" disabled={busy} className={`${buttonDark} w-full`}>
-            {busy ? 'Adding…' : 'Add barber'}
+            {busy ? t('addBarber.adding') : t('addBarber.add')}
           </button>
         </form>
       </Section>

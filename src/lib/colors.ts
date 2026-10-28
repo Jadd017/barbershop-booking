@@ -2,6 +2,7 @@
  * The shop's colors (settings/branding): format checks, and contrast warnings so the owner doesn't
  * pick colors customers can't read. Same thresholds as WCAG AA (docs/DEVELOPMENT.md, "Look").
  */
+import i18n from '../i18n';
 import type { BrandColors, Branding } from '../types';
 import { isLogoDataUrl } from './logo';
 
@@ -32,10 +33,10 @@ export function contrastRatio(a: string, b: string): number {
 export function contrastWarnings(colors: BrandColors): string[] {
   const warnings: string[] = [];
   if (contrastRatio(colors.dark, colors.light) < 4.5) {
-    warnings.push('Text will be hard to read on the background: pick a darker or lighter color.');
+    warnings.push(i18n.t('branding.hardToRead'));
   }
   if (contrastRatio(colors.accent, colors.dark) < 3) {
-    warnings.push('The accent color is hard to see on the dark color.');
+    warnings.push(i18n.t('branding.accentHard'));
   }
   return warnings;
 }
@@ -44,11 +45,11 @@ export function contrastWarnings(colors: BrandColors): string[] {
 export function brandingErrors(branding: Branding): string[] {
   const errors: string[] = [];
   if (branding.logo !== null && !isLogoDataUrl(branding.logo)) {
-    errors.push('The logo must be a WebP, JPEG or PNG image under 100 KB.');
+    errors.push(i18n.t('branding.logoInvalid'));
   }
   const { dark, accent, light } = branding.colors;
   if (![dark, accent, light].every(isHexColor)) {
-    errors.push('Colors must be like #1E1B18.');
+    errors.push(i18n.t('branding.colorsFormat'));
   }
   return errors;
 }

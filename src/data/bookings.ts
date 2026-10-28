@@ -400,6 +400,7 @@ function confirmed(
     date: request.date,
     startTime: request.startTime,
     ...(request.service.price === undefined ? {} : { price: request.service.price }),
+    ...(request.service.nameAr ? { serviceNameAr: request.service.nameAr } : {}),
     barberId: barber.id,
     barberName: barber.name,
     anyBarber,
@@ -564,6 +565,7 @@ function toCustomerBooking(data: DocumentData): ShopCustomerBooking {
   const b = data as BookingDoc;
   return {
     bookingCode: b.bookingCode,
+    serviceId: b.serviceId,
     serviceName: b.serviceName,
     durationMinutes: b.durationMinutes,
     date: b.date,
@@ -580,6 +582,7 @@ function toStaffBooking(id: string, data: DocumentData): ShopStaffBooking {
     bookingCode: b.bookingCode ?? id,
     name: b.name,
     phone: b.phone ?? null,
+    serviceId: b.serviceId,
     serviceName: b.serviceName,
     durationMinutes: b.durationMinutes,
     date: b.date,

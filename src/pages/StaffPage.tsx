@@ -1,5 +1,6 @@
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router';
 import { BarberPage } from '../components/admin/barbers/BarberPage';
 import { BarbersPage } from '../components/admin/barbers/BarbersPage';
@@ -9,10 +10,12 @@ import { OwnerTools } from '../components/admin/OwnerTools';
 import type { StaffSession } from '../components/admin/session';
 import { MySettingsPage } from '../components/admin/settings/MySettingsPage';
 import { ShopSettingsPage } from '../components/admin/shop/ShopSettingsPage';
+import { LanguageBar } from '../components/LanguageToggle';
 import { BarberPole, buttonDark, buttonOutline, PageMessage } from '../components/ui';
 import { subscribeMyStaff } from '../data/accounts';
 import { auth, store } from '../data/firebase';
 import { ensureShop } from '../data/shop';
+import { ServicesContext } from '../hooks/useServiceNames';
 import { useShop } from '../hooks/useShop';
 import type { StaffMember } from '../types';
 
@@ -34,6 +37,7 @@ function isPasswordUser(user: User): boolean {
  * would refuse its writes anyway).
  */
 export function StaffPage({ view }: { view: StaffView }) {
+  const { t } = useTranslation();
   const { barberId: viewedBarberId } = useParams();
   // undefined = still checking whether someone is signed in.
   const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -73,36 +77,34 @@ export function StaffPage({ view }: { view: StaffView }) {
 
   const logout = () => signOut(auth);
 
-  if (user === undefined) return <PageMessage>Loading…</PageMessage>;
+  if (user === undefined) return <PageMessage>{t('common.loading')}</PageMessage>;
   if (!user) return <LoginForm />;
   if (!staffUid) {
     return (
       <NoAccess onLogout={logout}>
-        {user.email ?? 'This account'} is a customer account. Staff log in with their username.
+        {t('staff.customerAccount', { email: user.email ?? t('staff.thisAccount') })}
       </NoAccess>
     );
   }
   if (staffError || shopError) {
-    return <PageMessage error>Couldn't load your account. Check your connection and refresh.</PageMessage>;
+    return <PageMessage error>{t('staff.loadError')}</PageMessage>;
   }
 
   if (me === undefined || shop === undefined || barbers === undefined) {
-    return <PageMessage>Loading…</PageMessage>;
+    return <PageMessage>{t('common.loading')}</PageMessage>;
   }
-  if (me === null) return <NoAccess onLogout={logout}>This login doesn't have access.</NoAccess>;
+  if (me === null) return <NoAccess onLogout={logout}>{t('staff.noAccessLogin')}</NoAccess>;
   if (!me.active) {
     return (
-      <NoAccess onLogout={logout}>
-        This login has been turned off. Ask the owner for a new one.
-      </NoAccess>
+      <NoAccess onLogout={logout}>{t('staff.turnedOff')}</NoAccess>
     );
   }
-  if (!shop && isOwner) return <PageMessage>Setting up the shop…</PageMessage>;
+  if (!shop && isOwner) return <PageMessage>{t('staff.settingUp')}</PageMessage>;
   const barber = barbers.find((b) => b.id === me.barberId);
   if (!shop || !barber) {
     return (
       <NoAccess onLogout={logout}>
-        {shop ? 'Your barber profile is missing.' : "The shop isn't set up yet."} Ask the owner.
+        {shop ? t('staff.profileMissing') : t('staff.shopNotSetUp')}
       </NoAccess>
     );
   }
@@ -123,40 +125,48 @@ export function StaffPage({ view }: { view: StaffView }) {
     ) : (
       <Dashboard session={session} />
     );
-  return isOwner ? (
-    <OwnerTools shop={shop} barbers={barbers}>
-      {page}
-    </OwnerTools>
-  ) : (
-    page
+  return (
+    <ServicesContext.Provider value={shop.services}>
+      {isOwner ? (
+        <OwnerTools shop={shop} barbers={barbers}>
+          {page}
+        </OwnerTools>
+      ) : (
+        page
+      )}
+    </ServicesContext.Provider>
   );
 }
 
 /** What a barber sees on the owner's pages. */
 function OwnerOnly() {
+  const { t } = useTranslation();
   return (
     <div className="min-h-screen">
       <BarberPole />
-      <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-        <h1 className="caps mb-2 text-2xl font-semibold">Owner only</h1>
-        <p className="mb-6 text-sm text-muted-strong">This page is for the shop's owner.</p>
+      <LanguageBar />
+      <div className="mx-auto max-w-sm px-4 pt-12 text-center">
+        <h1 className="caps mb-2 text-2xl font-semibold">{t('staff.ownerOnly')}</h1>
+        <p className="mb-6 text-sm text-muted-strong">{t('staff.ownerOnlyText')}</p>
         <Link to="/admin" className={buttonDark}>
-          Back to my day
+          {t('staff.backToMyDay')}
         </Link>
       </div>
     </div>
   );
 }
 
-function NoAccess({ children, onLogout }: { children: string | string[]; onLogout: () => void }) {
+function NoAccess({ children, onLogout }: { children: string; onLogout: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="min-h-screen">
       <BarberPole />
-      <div className="mx-auto max-w-sm px-4 pt-16 text-center">
-        <h1 className="caps mb-2 text-2xl font-semibold">No access</h1>
+      <LanguageBar />
+      <div className="mx-auto max-w-sm px-4 pt-12 text-center">
+        <h1 className="caps mb-2 text-2xl font-semibold">{t('staff.noAccess')}</h1>
         <p className="mb-6 break-words text-sm text-muted-strong">{children}</p>
         <button type="button" onClick={onLogout} className={buttonOutline}>
-          Log out
+          {t('staff.logOut')}
         </button>
       </div>
     </div>

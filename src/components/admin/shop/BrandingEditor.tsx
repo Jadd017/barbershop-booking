@@ -1,5 +1,6 @@
 import { CalendarDays, ImagePlus } from 'lucide-react';
 import { useState, type ChangeEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { store } from '../../../data/firebase';
 import { saveBranding } from '../../../data/shop';
 import { useBranding } from '../../../hooks/useShop';
@@ -12,9 +13,9 @@ import { buttonDangerOutline, buttonDark, buttonOutline, linkButton, Notice } fr
 import { cardClass, Section } from '../settings/fields';
 
 const COLOR_FIELDS: { key: keyof BrandColors; label: string; hint: string }[] = [
-  { key: 'dark', label: 'Dark', hint: 'Header, text, main buttons' },
-  { key: 'accent', label: 'Accent', hint: 'Highlights and the booking button' },
-  { key: 'light', label: 'Background', hint: 'Page background' },
+  { key: 'dark', label: 'look.dark', hint: 'look.darkHint' },
+  { key: 'accent', label: 'look.accent', hint: 'look.accentHint' },
+  { key: 'light', label: 'look.background', hint: 'look.backgroundHint' },
 ];
 
 /**
@@ -23,6 +24,7 @@ const COLOR_FIELDS: { key: keyof BrandColors; label: string; hint: string }[] = 
  * Storage on the free plan); "Remove logo" shows the shop name only.
  */
 export function BrandingEditor({ shopName }: { shopName: string }) {
+  const { t } = useTranslation();
   const saved = useBranding();
   // Null while nothing is edited, so changes saved elsewhere show up live.
   const [draft, setDraft] = useState<Branding | null>(null);
@@ -51,10 +53,10 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
         error: true,
         text:
           err instanceof NotAnImageError
-            ? "That file isn't an image this browser can read. Try a PNG or JPEG."
+            ? t('look.notImage')
             : err instanceof LogoTooLargeError
-              ? "That image can't be made small enough. Try a simpler one."
-              : "Couldn't read the image. Try another one.",
+              ? t('look.tooLarge')
+              : t('look.readFailed'),
       });
       if (!(err instanceof NotAnImageError || err instanceof LogoTooLargeError)) console.error(err);
     }
@@ -67,10 +69,10 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
     try {
       await saveBranding(store, draft);
       setDraft(null);
-      setMessage({ error: false, text: 'Saved. Customers see the new look straight away.' });
+      setMessage({ error: false, text: t('look.saved') });
     } catch (err) {
       console.error(err);
-      setMessage({ error: true, text: "Couldn't save. Check your connection and try again." });
+      setMessage({ error: true, text: t('common.couldntSave') });
     }
     setBusy(null);
   }
@@ -78,9 +80,9 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
   const { dark, accent, light } = current.colors;
 
   return (
-    <Section title="Logo and colors" description="How the booking site looks. Saved on its own.">
+    <Section title={t('look.title')} description={t('look.description')}>
       {/* What customers will see: the header of the booking page. */}
-      <div aria-label="Preview" className="mb-3 overflow-hidden rounded-2xl border border-line" style={{ background: light }}>
+      <div aria-label={t('look.preview')} className="mb-3 overflow-hidden rounded-2xl border border-line" style={{ background: light }}>
         <div aria-hidden className="barber-pole" />
         <div className="flex items-start justify-between gap-3 px-4 pb-4 pt-3" style={{ background: dark, color: light }}>
           <div className="flex min-w-0 items-center gap-3">
@@ -92,28 +94,28 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
             style={{ borderColor: accent }}
           >
             <CalendarDays aria-hidden size={14} style={{ color: lighten(accent, 0.35) }} />
-            My bookings
+            {t('header.myBookings')}
           </span>
         </div>
         <div className="px-4 py-3" style={{ color: dark }}>
-          <p className="text-sm">Pick a service, a barber and a time.</p>
+          <p className="text-sm">{t('look.previewText')}</p>
           <span
             className="caps mt-2 inline-flex min-h-10 items-center rounded-xl px-4 text-sm font-semibold"
             style={{ background: accent, color: dark }}
           >
-            Book now
+            {t('booking.bookNow')}
           </span>
         </div>
       </div>
-      <p className="mb-3 text-xs text-muted-strong">Preview of the booking page{draft ? ' (not saved yet)' : ''}.</p>
+      <p className="mb-3 text-xs text-muted-strong">{draft ? t('look.previewNoteDraft') : t('look.previewNote')}</p>
 
       <div className={`${cardClass} grid gap-4`}>
         <div>
-          <p className="mb-2 text-sm font-medium">Logo</p>
+          <p className="mb-2 text-sm font-medium">{t('look.logo')}</p>
           <div className="flex flex-wrap gap-2">
             <label className={`${buttonOutline} cursor-pointer text-sm ${busy ? 'pointer-events-none opacity-50' : ''}`}>
               <ImagePlus aria-hidden size={18} />
-              {busy === 'logo' ? 'Shrinking…' : current.logo ? 'Change logo' : 'Upload logo'}
+              {busy === 'logo' ? t('look.shrinking') : current.logo ? t('look.change') : t('look.upload')}
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
@@ -124,18 +126,15 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
             </label>
             {current.logo && (
               <button type="button" onClick={() => edit({ logo: null })} disabled={busy !== null} className={`${buttonDangerOutline} text-sm`}>
-                Remove logo
+                {t('look.removeLogo')}
               </button>
             )}
           </div>
-          <p className="mt-1 text-xs text-muted-strong">
-            PNG, JPEG or WebP. It's resized to fit 512 px and kept under 100 KB. Without a logo, the
-            shop name is shown alone.
-          </p>
+          <p className="mt-1 text-xs text-muted-strong">{t('look.logoHelp')}</p>
         </div>
 
         <div>
-          <p className="mb-2 text-sm font-medium">Colors</p>
+          <p className="mb-2 text-sm font-medium">{t('look.colors')}</p>
           <div className="grid gap-2">
             {COLOR_FIELDS.map(({ key, label, hint }) => (
               <label key={key} className="flex items-center gap-3">
@@ -147,9 +146,12 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
                 />
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold">
-                    {label} <span className="font-normal tabular-nums text-muted-strong">{current.colors[key]}</span>
+                    {t(label)}{' '}
+                    <span dir="ltr" className="font-normal tabular-nums text-muted-strong">
+                      {current.colors[key]}
+                    </span>
                   </span>
-                  <span className="block text-xs text-muted-strong">{hint}</span>
+                  <span className="block text-xs text-muted-strong">{t(hint)}</span>
                 </span>
               </label>
             ))}
@@ -159,7 +161,7 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
             onClick={() => edit({ colors: { ...DEFAULT_COLORS } })}
             className={`${linkButton} text-ink underline`}
           >
-            Reset colors to defaults
+            {t('look.reset')}
           </button>
           {warnings.map((w) => (
             <Notice key={w} tone="warning" className="mt-2">
@@ -178,10 +180,10 @@ export function BrandingEditor({ shopName }: { shopName: string }) {
         {draft && (
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={() => setDraft(null)} disabled={busy !== null} className={buttonOutline}>
-              Discard
+              {t('common.discard')}
             </button>
             <button type="button" onClick={save} disabled={busy !== null || errors.length > 0} className={buttonDark}>
-              {busy === 'save' ? 'Saving…' : 'Save look'}
+              {busy === 'save' ? t('common.saving') : t('look.save')}
             </button>
           </div>
         )}

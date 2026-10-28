@@ -1,6 +1,7 @@
 import type { User } from 'firebase/auth';
 import { ArrowLeft, Clock, Scissors, UserRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ShopHeader } from '../components/ShopHeader';
 import {
@@ -23,6 +24,7 @@ import {
   signOutCustomer,
 } from '../data/auth';
 import { useCustomer } from '../hooks/useCustomer';
+import { ServicesContext, useBookingServiceName } from '../hooks/useServiceNames';
 import { useShop } from '../hooks/useShop';
 import { clearLastBooking, loadLastBooking } from '../lib/lastBooking';
 import { isPast } from '../lib/slots';
@@ -30,9 +32,7 @@ import { formatDayLong, minutesToTime, timeToMinutes } from '../lib/time';
 import type { BookingStatus, ShopCustomerBooking } from '../types';
 
 /** Customers see "Missed" rather than the barber's "No-show". */
-const STATUS_LABELS: Partial<Record<BookingStatus, string>> = { 'no-show': 'Missed' };
-
-const GENERIC_ERROR = 'Something went wrong. Check your connection and try again.';
+const STATUS_LABELS: Partial<Record<BookingStatus, string>> = { 'no-show': 'status.missed' };
 
 /** Still ahead and "booked", so it can be cancelled. */
 function isUpcoming(b: ShopCustomerBooking): boolean {
@@ -40,6 +40,7 @@ function isUpcoming(b: ShopCustomerBooking): boolean {
 }
 
 export function MyBookingsPage() {
+  const { t } = useTranslation();
   const customer = useCustomer();
   const { shop } = useShop();
   const [signingIn, setSigningIn] = useState(false);
@@ -72,32 +73,31 @@ export function MyBookingsPage() {
             to="/"
             className="caps inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-brass/60 px-4 text-xs font-medium text-cream hover:bg-cream/10"
           >
-            <ArrowLeft aria-hidden size={16} className="text-brass-light" />
-            Book
+            <ArrowLeft aria-hidden size={16} className="text-brass-light rtl:-scale-x-100" />
+            {t('header.book')}
           </Link>
         }
       />
 
       <main className="mx-auto max-w-xl px-4 pt-6">
-        <h1 className="caps mb-5 text-2xl font-semibold">My bookings</h1>
+        <h1 className="caps mb-5 text-2xl font-semibold">{t('myBookings.title')}</h1>
 
         {customer === undefined ? (
-          <p className="text-sm text-muted-strong">Loading…</p>
+          <p className="text-sm text-muted-strong">{t('common.loading')}</p>
         ) : customer ? (
-          <BookingList customer={customer} />
+          <ServicesContext.Provider value={shop?.services ?? []}>
+            <BookingList customer={customer} />
+          </ServicesContext.Provider>
         ) : (
           <div className="rounded-2xl border border-line bg-card p-5">
-            <p className="mb-5">
-              Sign in with the Google account you booked with to see and cancel your bookings.
-            </p>
+            <p className="mb-5">{t('myBookings.signInPrompt')}</p>
             {(signInError || isInAppBrowser()) && (
               <Notice tone="error" className="mb-4">
-                {signInError ??
-                  'Google sign-in may not work inside this app. If it fails, open this page in Chrome or Safari.'}
+                {signInError ?? t('signIn.inAppWarning')}
               </Notice>
             )}
             <button type="button" onClick={signIn} disabled={signingIn} className={`${buttonDark} w-full`}>
-              {signingIn ? 'Signing in…' : 'Sign in with Google'}
+              {signingIn ? t('signIn.signingIn') : t('signIn.withGoogle')}
             </button>
           </div>
         )}
@@ -107,6 +107,7 @@ export function MyBookingsPage() {
 }
 
 function BookingList({ customer }: { customer: User }) {
+  const { t } = useTranslation();
   // Tagged with whose they are, so another account's list is never shown after switching.
   const [bookings, setBookings] = useState<{ uid: string; items: ShopCustomerBooking[] } | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -129,11 +130,11 @@ function BookingList({ customer }: { customer: User }) {
   }, [uid]);
 
   if (loadError) {
-    return <Notice tone="error">Couldn't load your bookings. Check your connection and refresh.</Notice>;
+    return <Notice tone="error">{t('myBookings.loadError')}</Notice>;
   }
 
   const items = bookings?.uid === uid ? bookings.items : null;
-  if (!items) return <p className="text-sm text-muted-strong">Loading…</p>;
+  if (!items) return <p className="text-sm text-muted-strong">{t('common.loading')}</p>;
 
   const upcoming = items.filter(isUpcoming);
   // Most recent first.
@@ -143,16 +144,16 @@ function BookingList({ customer }: { customer: User }) {
     <>
       {justCancelled && (
         <Notice tone="success" className="mb-6">
-          Your booking has been cancelled and the time is free again.
+          {t('myBookings.cancelled')}
         </Notice>
       )}
 
-      <SectionLabel>Upcoming</SectionLabel>
+      <SectionLabel>{t('myBookings.upcoming')}</SectionLabel>
       {upcoming.length === 0 ? (
         <p className="mb-8 rounded-2xl border border-dashed border-line p-6 text-center text-sm text-muted-strong">
-          No upcoming bookings.{' '}
+          {t('myBookings.noUpcoming')}{' '}
           <Link to="/" className="font-semibold text-ink underline">
-            Book now
+            {t('myBookings.bookNow')}
           </Link>
         </p>
       ) : (
@@ -165,7 +166,7 @@ function BookingList({ customer }: { customer: User }) {
 
       {earlier.length > 0 && (
         <>
-          <SectionLabel>Past and cancelled</SectionLabel>
+          <SectionLabel>{t('myBookings.pastAndCancelled')}</SectionLabel>
           <ul className="grid gap-3">
             {earlier.map((b) => (
               <BookingItem key={b.bookingCode} booking={b} onCancelled={() => setJustCancelled(true)} />
@@ -183,6 +184,8 @@ interface ItemProps {
 }
 
 function BookingItem({ booking, onCancelled }: ItemProps) {
+  const { t } = useTranslation();
+  const serviceName = useBookingServiceName();
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -203,10 +206,10 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
       if (err instanceof AlreadyCancelledError) {
         // Already what they wanted; the listener will show it.
       } else if (err instanceof TimePassedError || err instanceof NotCancellableError) {
-        setError("This appointment's time has passed, so it can't be cancelled.");
+        setError(t('myBookings.passedCantCancel'));
       } else {
         console.error(err);
-        setError(GENERIC_ERROR);
+        setError(t('common.somethingWrong'));
       }
     } finally {
       setCancelling(false);
@@ -227,25 +230,29 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
           </p>
           <p className="flex items-center gap-1.5 text-sm">
             <Scissors aria-hidden size={14} className="text-muted" />
-            {booking.serviceName} · {booking.durationMinutes} min
+            {serviceName(booking)} · {t('common.minutes', { minutes: booking.durationMinutes })}
           </p>
           <p className="flex items-center gap-1.5 text-sm">
             <UserRound aria-hidden size={14} className="text-muted" />
-            With {booking.barberName}
+            {t('myBookings.withBarber', { name: booking.barberName })}
           </p>
         </div>
-        <StatusChip status={booking.status} label={STATUS_LABELS[booking.status]} />
+        <StatusChip
+          status={booking.status}
+          label={STATUS_LABELS[booking.status] && t(STATUS_LABELS[booking.status]!)}
+        />
       </div>
       <p className="border-t border-dashed border-line pt-3 text-sm text-muted">
-        Code <span className="caps font-semibold tracking-[0.2em] text-ink">{booking.bookingCode}</span>
+        {t('common.code')}{' '}
+        <span lang="en" dir="ltr" className="caps font-semibold tracking-[0.2em] text-ink">
+          {booking.bookingCode}
+        </span>
       </p>
 
       {upcoming &&
         (confirmingCancel ? (
           <div className="mt-4 rounded-xl border border-pole-red/30 bg-pole-red/5 p-4">
-            <p className="mb-4 text-sm font-semibold text-pole-red">
-              Are you sure you want to cancel this booking?
-            </p>
+            <p className="mb-4 text-sm font-semibold text-pole-red">{t('myBookings.confirmCancel')}</p>
             <div className="flex gap-3">
               <button
                 type="button"
@@ -253,7 +260,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
                 disabled={cancelling}
                 className={`${buttonOutline} flex-1`}
               >
-                Keep it
+                {t('common.keepIt')}
               </button>
               <button
                 type="button"
@@ -261,7 +268,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
                 disabled={cancelling}
                 className={`${buttonDanger} flex-1`}
               >
-                {cancelling ? 'Cancelling…' : 'Yes, cancel'}
+                {cancelling ? t('common.cancelling') : t('common.yesCancel')}
               </button>
             </div>
           </div>
@@ -271,7 +278,7 @@ function BookingItem({ booking, onCancelled }: ItemProps) {
             onClick={() => setConfirmingCancel(true)}
             className={`${buttonDangerOutline} mt-4 w-full`}
           >
-            Cancel booking
+            {t('myBookings.cancelBooking')}
           </button>
         ))}
 

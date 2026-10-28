@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MAX_NAME_LENGTH } from '../../config';
 import { createWalkIn } from '../../data/bookings';
 import { SlotTakenError } from '../../data/errors';
@@ -37,6 +38,7 @@ interface Props {
  * moment.
  */
 export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, onClose, onAdded }: Props) {
+  const { t } = useTranslation();
   const [today] = useState(() => toDateKey(new Date()));
   const [barberId, setBarberId] = useState(initialBarberId);
   const barber = barbers.find((b) => b.id === barberId) ?? barbers[0];
@@ -61,14 +63,14 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
 
     const trimmedName = name.trim();
     const normalizedPhone = phone.trim() ? normalizeLebanesePhone(phone) : null;
-    if (!service || !selectedTime) return setError('Pick a service and a free time.');
+    if (!service || !selectedTime) return setError(t('walkIn.pickServiceTime'));
     if (isPast(day, selectedTime)) {
       setTime(null);
-      return setError('This time has already passed, please pick another.');
+      return setError(t('walkIn.passed'));
     }
-    if (trimmedName.length < 2) return setError('Enter the customer name.');
+    if (trimmedName.length < 2) return setError(t('walkIn.enterName'));
     if (phone.trim() && !normalizedPhone) {
-      return setError('That phone number looks wrong. Leave it empty if you don\'t have one.');
+      return setError(t('walkIn.phoneWrong'));
     }
 
     setSaving(true);
@@ -84,10 +86,10 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
       onAdded(day, barber.id);
     } catch (err) {
       if (err instanceof SlotTakenError) {
-        setError('Sorry, this time was just taken, please pick another.');
+        setError(t('walkIn.taken'));
       } else {
         console.error(err);
-        setError("Couldn't save. Check your connection and try again.");
+        setError(t('common.couldntSave'));
       }
       setTime(null);
       setSaving(false);
@@ -105,7 +107,8 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
         <header className="sticky top-0 z-10 bg-charcoal text-cream">
           <div className="mx-auto flex max-w-xl items-center justify-between px-4 py-3">
             <h2 id="walk-in-title" className="caps text-2xl font-semibold tracking-[0.1em]">
-              Walk-in{self ? '' : ` · ${barber.name}`}
+              {t('walkIn.title')}
+              {self ? '' : ` · ${barber.name}`}
             </h2>
             <button
               type="button"
@@ -114,7 +117,7 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
               className="inline-flex min-h-11 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
             >
               <X aria-hidden size={18} />
-              Close
+              {t('common.close')}
             </button>
           </div>
         </header>
@@ -122,7 +125,7 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
         <div className="mx-auto max-w-xl px-4 pb-32 pt-5">
           {!self && (
             <section className="mb-6">
-              <StepLabel step={1}>Barber</StepLabel>
+              <StepLabel step={1}>{t('common.barber')}</StepLabel>
               <BarberChips
                 barbers={barbers}
                 selected={barber.id}
@@ -134,7 +137,7 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
             </section>
           )}
           <section className="mb-6">
-            <StepLabel step={self ? 1 : 2}>Service</StepLabel>
+            <StepLabel step={self ? 1 : 2}>{t('common.service')}</StepLabel>
             <ServicePicker
               services={shop.services}
               selectedId={serviceId}
@@ -146,10 +149,10 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
           </section>
 
           <section className="mb-6">
-            <StepLabel step={self ? 2 : 3}>Day</StepLabel>
+            <StepLabel step={self ? 2 : 3}>{t('common.day')}</StepLabel>
             <input
               type="date"
-              aria-label="Day"
+              aria-label={t('common.day')}
               min={today}
               value={day}
               onChange={(e) => {
@@ -164,21 +167,21 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
 
           {service && (
             <section className="mb-6">
-              <StepLabel step={self ? 3 : 4}>Time</StepLabel>
+              <StepLabel step={self ? 3 : 4}>{t('common.time')}</StepLabel>
               {slotsError ? (
-                <Notice tone="error">Couldn't load times. Check your connection.</Notice>
+                <Notice tone="error">{t('walkIn.timesError')}</Notice>
               ) : offReason ? (
-                <Notice tone="warning">{offReason} Pick another day.</Notice>
+                <Notice tone="warning">{t('walkIn.pickAnotherDay', { reason: offReason })}</Notice>
               ) : startTimes ? (
                 <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
               ) : (
-                <p className="text-sm text-muted-strong">Loading times…</p>
+                <p className="text-sm text-muted-strong">{t('booking.loadingTimes')}</p>
               )}
             </section>
           )}
 
           <label className="mb-4 block">
-            <span className="caps mb-1 block text-xs font-semibold">Name</span>
+            <span className="caps mb-1 block text-xs font-semibold">{t('common.name')}</span>
             <input
               type="text"
               autoComplete="off"
@@ -192,17 +195,19 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
 
           <label className="mb-6 block">
             <span className="caps mb-1 block text-xs font-semibold">
-              Phone <span className="font-normal normal-case tracking-normal text-muted-strong">(optional)</span>
+              {t('common.phone')}{' '}
+              <span className="font-normal normal-case tracking-normal text-muted-strong">{t('common.optional')}</span>
             </span>
             <input
               type="tel"
               inputMode="tel"
               autoComplete="off"
-              placeholder="+961 70 123 456"
+              dir="ltr"
+              placeholder={t('common.phonePlaceholder')}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               disabled={saving}
-              className={`${inputBase} w-full tabular-nums`}
+              className={`${inputBase} w-full text-start tabular-nums rtl:text-end`}
             />
           </label>
 
@@ -220,7 +225,7 @@ export function AddBookingSheet({ shop, barbers, initialBarberId, initialDate, o
               disabled={saving || !selectedTime}
               className={`${buttonBrass} caps min-h-14 w-full text-base`}
             >
-              {saving ? 'Saving…' : selectedTime ? `Add booking at ${selectedTime}` : 'Pick a time'}
+              {saving ? t('common.saving') : selectedTime ? t('walkIn.addAt', { time: selectedTime }) : t('walkIn.pickTime')}
             </button>
           </div>
         </div>

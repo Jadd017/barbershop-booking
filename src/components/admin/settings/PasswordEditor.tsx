@@ -1,5 +1,6 @@
 import type { User } from 'firebase/auth';
 import { useState, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import { changeMyPassword, passwordErrors } from '../../../data/accounts';
 import { WrongLoginError } from '../../../data/errors';
 import { buttonDark, inputBase, Notice } from '../../ui';
@@ -7,6 +8,7 @@ import { cardClass, Section } from './fields';
 
 /** The signed-in staff member changes their own password: current one first, the new one twice. */
 export function PasswordEditor({ user, username }: { user: User; username: string }) {
+  const { t } = useTranslation();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [again, setAgain] = useState('');
@@ -17,12 +19,12 @@ export function PasswordEditor({ user, username }: { user: User; username: strin
     e.preventDefault();
     setMessage(null);
     const problem = !current
-      ? 'Enter your current password.'
+      ? t('password.enterCurrent')
       : (passwordErrors(next)[0] ??
         (next !== again
-          ? "The new passwords don't match."
+          ? t('password.noMatch')
           : next === current
-            ? 'The new password is the same as the current one.'
+            ? t('password.same')
             : null));
     if (problem) return setMessage({ error: true, text: problem });
 
@@ -32,19 +34,19 @@ export function PasswordEditor({ user, username }: { user: User; username: strin
       setCurrent('');
       setNext('');
       setAgain('');
-      setMessage({ error: false, text: 'Password changed. Use the new one next time you log in.' });
+      setMessage({ error: false, text: t('password.changed') });
     } catch (err) {
       const code = (err as { code?: string } | null)?.code;
       setMessage({
         error: true,
         text:
           err instanceof WrongLoginError
-            ? 'Your current password is wrong.'
+            ? t('password.wrongCurrent')
             : code === 'auth/too-many-requests'
-              ? 'Too many attempts. Wait a few minutes and try again.'
+              ? t('common.tooManyAttempts')
               : code === 'auth/network-request-failed'
-                ? 'No connection. Check your internet and try again.'
-                : "Couldn't change the password. Please try again.",
+                ? t('common.noConnection')
+                : t('password.failed'),
       });
       if (!(err instanceof WrongLoginError)) console.error(err);
     }
@@ -56,6 +58,7 @@ export function PasswordEditor({ user, username }: { user: User; username: strin
       <span className="mb-1 block text-sm font-medium">{label}</span>
       <input
         type="password"
+        dir="ltr"
         autoComplete={autoComplete}
         value={value}
         onChange={(e) => set(e.target.value)}
@@ -66,20 +69,20 @@ export function PasswordEditor({ user, username }: { user: User; username: strin
   );
 
   return (
-    <Section title="Password" description={`You log in as "${username}".`}>
+    <Section title={t('password.title')} description={t('password.loginAs', { username })}>
       <form onSubmit={handleSubmit} noValidate className={cardClass}>
         {/* Lets password managers pair the new password with the username. */}
         <input type="text" autoComplete="username" value={username} readOnly hidden />
-        {field('Current password', current, setCurrent, 'current-password')}
-        {field('New password (at least 8 characters)', next, setNext, 'new-password')}
-        {field('New password again', again, setAgain, 'new-password')}
+        {field(t('password.current'), current, setCurrent, 'current-password')}
+        {field(t('password.new'), next, setNext, 'new-password')}
+        {field(t('password.again'), again, setAgain, 'new-password')}
         {message && (
           <Notice tone={message.error ? 'error' : 'success'} className="mb-3">
             {message.text}
           </Notice>
         )}
         <button type="submit" disabled={busy} className={`${buttonDark} w-full`}>
-          {busy ? 'Changing…' : 'Change password'}
+          {busy ? t('password.changing') : t('password.change')}
         </button>
       </form>
     </Section>

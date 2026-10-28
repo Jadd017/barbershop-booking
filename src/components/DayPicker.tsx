@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import { dateLocale } from '../i18n';
 import { fromDateKey } from '../lib/time';
 import type { DateKey } from '../types';
 
@@ -10,12 +12,15 @@ interface Props {
 }
 
 export function DayPicker({ days, today, selected, onSelect }: Props) {
+  const { t } = useTranslation();
+  const locale = dateLocale();
   return (
     <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
       {days.map(({ date, open }) => {
         const d = fromDateKey(date);
-        const weekday = date === today ? 'Today' : d.toLocaleDateString('en-US', { weekday: 'short' });
-        const month = d.toLocaleDateString('en-US', { month: 'short' });
+        const weekday = date === today ? t('booking.today') : d.toLocaleDateString(locale, { weekday: 'short' });
+        const month = d.toLocaleDateString(locale, { month: 'short' });
+        const longDate = d.toLocaleDateString(locale, { weekday: 'long', month: 'long', day: 'numeric' });
         const isSelected = open && date === selected;
         return (
           <button
@@ -24,7 +29,7 @@ export function DayPicker({ days, today, selected, onSelect }: Props) {
             disabled={!open}
             onClick={() => onSelect(date)}
             aria-pressed={isSelected}
-            aria-label={`${d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}${open ? '' : ', closed'}`}
+            aria-label={open ? longDate : t('booking.closedLabel', { day: longDate })}
             className={`flex min-h-20 min-w-16 flex-1 flex-col items-center justify-center rounded-2xl border px-2 py-2 transition ${
               !open
                 ? 'cursor-not-allowed border-dashed border-line bg-transparent text-muted-strong'
@@ -35,7 +40,7 @@ export function DayPicker({ days, today, selected, onSelect }: Props) {
           >
             <span className="caps text-xs font-medium">{weekday}</span>
             <span className="caps text-2xl leading-tight font-semibold">{d.getDate()}</span>
-            <span className="text-xs">{open ? month : 'Closed'}</span>
+            <span className="text-xs">{open ? month : t('booking.closedDay')}</span>
           </button>
         );
       })}

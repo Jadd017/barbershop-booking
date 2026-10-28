@@ -43,6 +43,19 @@ body {
   @apply bg-cream text-ink antialiased;
 }
 
+/* Arabic (i18n/index.ts sets <html lang="ar" dir="rtl">): Cairo for Arabic letters, Oswald still
+   for Latin names and digits in headings. Letter spacing pulls joined Arabic letters apart, so
+   it's off, except on parts marked lang="en" (booking codes). */
+:root:lang(ar) {
+  --font-display: "Oswald", "Cairo", ui-sans-serif, system-ui, sans-serif;
+}
+:root:lang(ar) body {
+  font-family: "Cairo", ui-sans-serif, system-ui, sans-serif;
+}
+:lang(ar) {
+  letter-spacing: 0 !important;
+}
+
 /* Keyboard focus that shows on cream, cards and charcoal alike. */
 :focus-visible {
   outline: 3px solid var(--color-brass);

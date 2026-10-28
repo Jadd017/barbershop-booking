@@ -1,5 +1,6 @@
 import { ArrowRightLeft, Check, MessageCircle, Phone, Undo2, UserX, X } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { setBookingStatus, staffCancelBooking } from '../../data/bookings';
 import { AlreadyCancelledError, NotCancellableError } from '../../data/errors';
 import { store } from '../../data/firebase';
@@ -16,6 +17,7 @@ interface Props {
 
 /** Done / No-show, Call / WhatsApp / Cancel (and Move, for the owner), or Undo, for one booking. */
 export function BookingActions({ booking, cancelOnly = false }: Props) {
+  const { t } = useTranslation();
   const owner = useOwner();
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,10 +31,10 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
       await action();
     } catch (err) {
       if (err instanceof AlreadyCancelledError || err instanceof NotCancellableError) {
-        setError('This booking was already changed. The list shows it as it is now.');
+        setError(t('actions.alreadyChanged'));
       } else {
         console.error(err);
-        setError("Couldn't save. Check your connection and try again.");
+        setError(t('common.couldntSave'));
       }
     } finally {
       setBusy(false);
@@ -53,7 +55,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
             className={`${buttonDark} caps min-h-14 text-base`}
           >
             <Check aria-hidden size={20} className="text-brass-light" />
-            Done
+            {t('actions.done')}
           </button>
           <button
             type="button"
@@ -62,7 +64,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
             className={`${buttonOutline} caps min-h-14 text-base`}
           >
             <UserX aria-hidden size={20} />
-            No-show
+            {t('actions.noShow')}
           </button>
         </div>
       )}
@@ -73,7 +75,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
             <>
               <a href={`tel:${booking.phone}`} className={`${linkButton} text-pole-blue`}>
                 <Phone aria-hidden size={16} />
-                Call
+                {t('actions.call')}
               </a>
               <a
                 href={whatsappLink(booking.phone)}
@@ -82,7 +84,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
                 className={`${linkButton} text-ink`}
               >
                 <MessageCircle aria-hidden size={16} className="text-whatsapp" />
-                WhatsApp
+                {t('actions.whatsapp')}
               </a>
             </>
           )}
@@ -94,7 +96,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
               className={`${linkButton} text-ink`}
             >
               <ArrowRightLeft aria-hidden size={16} />
-              Move
+              {t('actions.move')}
             </button>
           )}
           {booked && (
@@ -102,10 +104,10 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
               type="button"
               disabled={busy}
               onClick={() => setConfirmingCancel(true)}
-              className={`${linkButton} ml-auto text-pole-red`}
+              className={`${linkButton} ms-auto text-pole-red`}
             >
               <X aria-hidden size={16} />
-              Cancel
+              {t('actions.cancel')}
             </button>
           )}
         </div>
@@ -114,7 +116,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
       {confirmingCancel && (
         <div className="rounded-xl border border-pole-red/30 bg-pole-red/5 p-3">
           <p className="mb-3 text-sm font-semibold text-pole-red">
-            Cancel this booking? The time becomes free for others.
+            {t('actions.confirmCancel')}
           </p>
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -123,7 +125,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
               onClick={() => setConfirmingCancel(false)}
               className={buttonOutline}
             >
-              Keep it
+              {t('common.keepIt')}
             </button>
             <button
               type="button"
@@ -131,7 +133,7 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
               onClick={() => run(() => staffCancelBooking(store, booking.id))}
               className={buttonDanger}
             >
-              {busy ? 'Cancelling…' : 'Yes, cancel'}
+              {busy ? t('common.cancelling') : t('common.yesCancel')}
             </button>
           </div>
         </div>
@@ -144,8 +146,8 @@ export function BookingActions({ booking, cancelOnly = false }: Props) {
           onClick={() => run(() => setBookingStatus(store, booking.id, 'booked'))}
           className={`${linkButton} text-muted`}
         >
-          <Undo2 aria-hidden size={16} />
-          Undo {booking.status === 'done' ? 'Done' : 'No-show'}
+          <Undo2 aria-hidden size={16} className="rtl:-scale-x-100" />
+          {booking.status === 'done' ? t('actions.undoDone') : t('actions.undoNoShow')}
         </button>
       )}
 

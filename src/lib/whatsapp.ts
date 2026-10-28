@@ -1,4 +1,6 @@
+import i18n from '../i18n';
 import type { ShopConfirmedBooking, ShopStaffBooking } from '../types';
+import { bookingServiceName } from './shop';
 import { formatDayLong } from './time';
 
 /** A wa.me link that opens a chat with `phone` (any format), with `message` pre-filled if given. */
@@ -8,16 +10,16 @@ export function whatsappLink(phone: string, message?: string): string {
   return message ? `${base}?text=${encodeURIComponent(message)}` : base;
 }
 
-/** The message a customer sends the shop about a new booking. */
+/** The message a customer sends the shop about a new booking, in the language they're using. */
 export function bookingMessage(booking: ShopConfirmedBooking, shopName: string): string {
   return [
-    `Hi ${shopName}, I just booked an appointment:`,
-    `Barber: ${booking.barberName}${booking.anyBarber ? ' (any barber)' : ''}`,
-    `Name: ${booking.name}`,
-    `Service: ${booking.serviceName} (${booking.durationMinutes} min)`,
-    `Day: ${formatDayLong(booking.date)}`,
-    `Time: ${booking.startTime}`,
-    `Booking code: ${booking.bookingCode}`,
+    i18n.t('whatsapp.intro', { shop: shopName }),
+    i18n.t(booking.anyBarber ? 'whatsapp.barberAny' : 'whatsapp.barber', { name: booking.barberName }),
+    i18n.t('whatsapp.name', { name: booking.name }),
+    i18n.t('whatsapp.service', { service: bookingServiceName(booking, []), minutes: booking.durationMinutes }),
+    i18n.t('whatsapp.day', { day: formatDayLong(booking.date) }),
+    i18n.t('whatsapp.time', { time: booking.startTime }),
+    i18n.t('whatsapp.code', { code: booking.bookingCode }),
   ].join('\n');
 }
 
@@ -36,8 +38,12 @@ export function bookingWhatsappLink(
  * code: K7M2QX".
  */
 export function movedMessage(booking: ShopStaffBooking, shopName: string): string {
-  return (
-    `Hi ${booking.name}, your booking at ${shopName} on ${formatDayLong(booking.date)} at ` +
-    `${booking.startTime} is now with ${booking.barberName}. Booking code: ${booking.bookingCode}`
-  );
+  return i18n.t('whatsapp.moved', {
+    name: booking.name,
+    shop: shopName,
+    day: formatDayLong(booking.date),
+    time: booking.startTime,
+    barber: booking.barberName,
+    code: booking.bookingCode,
+  });
 }

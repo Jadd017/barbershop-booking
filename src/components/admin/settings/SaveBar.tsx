@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { buttonDark, buttonOutline } from '../../ui';
 
 interface Props {
@@ -13,11 +14,12 @@ interface Props {
 
 /** Discard / Save changes for a draft, fixed above the bottom bar while there are changes. */
 export function SaveBar({ errors, confirm, saveError, saving, onSave, onDiscard }: Props) {
+  const { t } = useTranslation();
   return (
     <div className="fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 border-t border-line bg-cream/95 backdrop-blur">
       <div className="mx-auto max-h-[50vh] max-w-xl overflow-y-auto px-4 py-3">
         {errors.length > 0 && (
-          <ul role="alert" className="mb-3 list-disc pl-5 text-sm text-pole-red">
+          <ul role="alert" className="mb-3 list-disc ps-5 text-sm text-pole-red">
             {errors.map((e) => (
               <li key={e}>{e}</li>
             ))}
@@ -31,10 +33,10 @@ export function SaveBar({ errors, confirm, saveError, saving, onSave, onDiscard 
         {saveError && <p className="mb-3 text-sm text-pole-red">{saveError}</p>}
         <div className="grid grid-cols-2 gap-2">
           <button type="button" onClick={onDiscard} disabled={saving} className={buttonOutline}>
-            Discard
+            {t('common.discard')}
           </button>
           <button type="button" onClick={onSave} disabled={saving || errors.length > 0} className={buttonDark}>
-            {saving ? 'Saving…' : confirm ? 'Save anyway' : 'Save changes'}
+            {saving ? t('common.saving') : confirm ? t('settings.saveAnyway') : t('settings.saveChanges')}
           </button>
         </div>
       </div>

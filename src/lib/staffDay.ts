@@ -4,9 +4,10 @@
  * whether a time range can be blocked.
  */
 import { SLOT_MINUTES } from '../config';
+import i18n from '../i18n';
 import type { Barber, DateKey, ShopSettings, ShopStaffBooking, TimeRange, TimeString } from '../types';
 import { fitsBarberHours, shopHoursOn } from './barberSchedule';
-import { weekdayIndex, WEEKDAY_NAMES } from './schedule';
+import { weekdayIndex, weekdayName } from './schedule';
 import { isPast } from './slots';
 import { minutesToTime, timeToMinutes } from './time';
 
@@ -28,11 +29,14 @@ export function blockedRanges(blocked: Iterable<TimeString>): TimeRange[] {
  * weekday.
  */
 export function notWorkingReason(shop: ShopSettings, barber: Barber, date: DateKey, self = true): string | null {
-  if (!shopHoursOn(shop, date)) return 'The shop is closed on this day.';
-  if (barber.daysOff.includes(date)) return self ? 'This is your day off.' : `${barber.name}'s day off.`;
+  if (!shopHoursOn(shop, date)) return i18n.t('schedule.shopClosedToday');
+  if (barber.daysOff.includes(date)) {
+    return self ? i18n.t('schedule.yourDayOff') : i18n.t('schedule.theirDayOff', { name: barber.name });
+  }
   const weekday = weekdayIndex(date);
   if (barber.weeklyHours[weekday]?.closed) {
-    return self ? `You don't work on ${WEEKDAY_NAMES[weekday]}s.` : `${barber.name} doesn't work on ${WEEKDAY_NAMES[weekday]}s.`;
+    const day = weekdayName(weekday);
+    return self ? i18n.t('schedule.youDontWork', { day }) : i18n.t('schedule.theyDontWork', { name: barber.name, day });
   }
   return null;
 }
@@ -60,11 +64,11 @@ export function bookingsOutsideHours(
  * range must be the right way round and inside the shop's hours, on a day the shop is open.
  */
 export function blockError(shop: ShopSettings, date: DateKey, start: TimeString, end: TimeString): string | null {
-  if (timeToMinutes(start) >= timeToMinutes(end)) return 'The end must be after the start.';
+  if (timeToMinutes(start) >= timeToMinutes(end)) return i18n.t('schedule.blockEndAfterStart');
   const hours = shopHoursOn(shop, date);
-  if (!hours) return 'The shop is closed that day, so there is nothing to block.';
+  if (!hours) return i18n.t('schedule.blockShopClosed');
   if (timeToMinutes(start) < timeToMinutes(hours.start) || timeToMinutes(end) > timeToMinutes(hours.end)) {
-    return `Block only within the shop's hours that day (${hours.start}–${hours.end}).`;
+    return i18n.t('schedule.blockWithinShop', { start: hours.start, end: hours.end });
   }
   return null;
 }

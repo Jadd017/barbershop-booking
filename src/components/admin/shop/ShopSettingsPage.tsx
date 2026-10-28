@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MAX_SHOP_NAME_LENGTH } from '../../../config';
 import { subscribeUpcomingBookings } from '../../../data/bookings';
 import { store } from '../../../data/firebase';
@@ -33,6 +34,7 @@ import { BrandingEditor } from './BrandingEditor';
  * stick out of narrower opening hours can be trimmed with one button.
  */
 export function ShopSettingsPage({ session }: { session: StaffSession }) {
+  const { t } = useTranslation();
   const { shop: saved, barbers } = session;
   const [today] = useState(() => toDateKey(new Date()));
   // Null while nothing is edited, so changes saved elsewhere show up live.
@@ -89,7 +91,7 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
       setConfirming(false);
     } catch (err) {
       console.error(err);
-      setSaveError("Couldn't save. Check your connection and try again.");
+      setSaveError(t('common.couldntSave'));
     }
     setSaving(false);
   }
@@ -105,16 +107,16 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
     setTrim({ busy: true, message: null });
     try {
       const changed = await trimBarbersToShop(store, saved, barbers);
-      setTrim({ busy: false, message: `Trimmed the hours of ${changed.length} barber${changed.length === 1 ? '' : 's'}.` });
+      setTrim({ busy: false, message: t('shopSettings.trimmed', { count: changed.length }) });
     } catch (err) {
       console.error(err);
-      setTrim({ busy: false, message: "Couldn't trim. Check your connection and try again." });
+      setTrim({ busy: false, message: t('shopSettings.trimFailed') });
     }
   }
 
   return (
     <div className="min-h-screen pb-64">
-      <AdminHeader session={session} title="Settings">
+      <AdminHeader session={session} title={t('settings.title')}>
         <SettingsTabs active="shop" />
       </AdminHeader>
 
@@ -123,14 +125,11 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
           <div className="mb-8 rounded-2xl border border-brass/50 bg-brass/10 p-4">
             <h2 className="caps font-semibold">
               {conflicts.length === 1
-                ? '1 booking is outside the hours'
-                : `${conflicts.length} bookings are outside the hours`}
-              {draft ? ' (with your changes)' : ''}
+                ? t('shopSettings.outsideOne')
+                : t('shopSettings.outsideMany', { count: conflicts.length })}
+              {draft ? t('shopSettings.withYourChanges') : ''}
             </h2>
-            <p className="mb-3 text-sm">
-              On a closed day or a barber's day off, outside the shop's or the barber's hours, or
-              in a break. They stay booked: move or cancel them here and let the customer know.
-            </p>
+            <p className="mb-3 text-sm">{t('shopSettings.outsideText')}</p>
             <ul className="grid gap-3">
               {conflicts.map((b) => (
                 <BookingCard key={b.id} booking={b} showDate cancelOnly />
@@ -142,16 +141,24 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
         {outside.length > 0 && (
           <Notice tone="warning" className="mb-8">
             <p className="font-semibold">
-              {outside.map((b) => b.name).join(', ')}{' '}
-              {outside.length === 1 ? 'works' : 'work'} outside the{draft ? ' new' : ''} opening hours.
+              {t(
+                outside.length === 1
+                  ? draft
+                    ? 'shopSettings.worksOutsideNew'
+                    : 'shopSettings.worksOutside'
+                  : draft
+                    ? 'shopSettings.workOutsideNew'
+                    : 'shopSettings.workOutside',
+                { names: outside.map((b) => b.name).join(', ') },
+              )}
             </p>
             <p className="mb-2">
-              Customers can only book them while the shop is open.{' '}
-              {draft ? 'After saving, you can trim their hours to fit.' : 'Trim their hours to fit?'}
+              {t('shopSettings.onlyWhileOpen')}{' '}
+              {draft ? t('shopSettings.trimAfterSaving') : t('shopSettings.trimQuestion')}
             </p>
             {!draft && (
               <button type="button" onClick={trimBarbers} disabled={trim.busy} className={`${buttonOutline} text-sm`}>
-                {trim.busy ? 'Trimming…' : "Trim their hours to the shop's"}
+                {trim.busy ? t('shopSettings.trimming') : t('shopSettings.trim')}
               </button>
             )}
           </Notice>
@@ -162,10 +169,10 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
           </Notice>
         )}
 
-        <Section title="Shop" description="The name is shown on every page and in WhatsApp messages.">
+        <Section title={t('shopSettings.shop')} description={t('shopSettings.shopDescription')}>
           <div className={`${cardClass} grid gap-3`}>
             <label className="block">
-              <span className="mb-1 block text-sm font-medium">Shop name</span>
+              <span className="mb-1 block text-sm font-medium">{t('shopSettings.shopName')}</span>
               <input
                 type="text"
                 autoComplete="off"
@@ -176,20 +183,21 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-sm font-medium">WhatsApp number</span>
+              <span className="mb-1 block text-sm font-medium">{t('shopSettings.whatsapp')}</span>
               <input
                 type="tel"
                 inputMode="tel"
                 autoComplete="off"
-                placeholder="+961 70 123 456"
+                dir="ltr"
+                placeholder={t('common.phonePlaceholder')}
                 value={whatsappText ?? current.whatsapp}
                 onChange={(e) => {
                   setWhatsappText(e.target.value);
                   edit({ whatsapp: normalizeLebanesePhone(e.target.value) ?? e.target.value.trim() });
                 }}
-                className={`${inputBase} w-full tabular-nums`}
+                className={`${inputBase} w-full text-start tabular-nums rtl:text-end`}
               />
-              <span className="mt-1 block text-sm text-muted">Customers send their booking details here.</span>
+              <span className="mt-1 block text-sm text-muted">{t('shopSettings.whatsappHelp')}</span>
             </label>
           </div>
         </Section>
@@ -213,8 +221,8 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
           today={today}
           daysOff={current.closedDays}
           onChange={(closedDays) => edit({ closedDays })}
-          title="Closed days"
-          description="Holidays: the whole shop is closed, so no barber can be booked."
+          title={t('shopSettings.closedDays')}
+          description={t('shopSettings.closedDaysHelp')}
         />
       </main>
 
@@ -223,7 +231,9 @@ export function ShopSettingsPage({ session }: { session: StaffSession }) {
           errors={errors}
           confirm={
             confirming
-              ? `${newConflicts.length === 1 ? '1 booking falls' : `${newConflicts.length} bookings fall`} outside the new hours (listed at the top). They won't be cancelled. Save anyway?`
+              ? newConflicts.length === 1
+                ? t('settings.conflictsOne')
+                : t('settings.conflictsMany', { count: newConflicts.length })
               : null
           }
           saveError={saveError}

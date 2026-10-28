@@ -1,3 +1,4 @@
+import { dateLocale } from '../i18n';
 import type { DateKey, TimeString } from '../types';
 
 export function timeToMinutes(time: TimeString): number {
@@ -40,13 +41,13 @@ export function upcomingDateKeys(count: number, from: Date = new Date()): DateKe
 export function formatDayShort(key: DateKey): { weekday: string; day: string } {
   const date = fromDateKey(key);
   return {
-    weekday: date.toLocaleDateString('en-US', { weekday: 'short' }),
-    day: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    weekday: date.toLocaleDateString(dateLocale(), { weekday: 'short' }),
+    day: date.toLocaleDateString(dateLocale(), { month: 'short', day: 'numeric' }),
   };
 }
 
 export function formatDayLong(key: DateKey): string {
-  return fromDateKey(key).toLocaleDateString('en-US', {
+  return fromDateKey(key).toLocaleDateString(dateLocale(), {
     weekday: 'long',
     month: 'long',
     day: 'numeric',

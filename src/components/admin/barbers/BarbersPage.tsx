@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { subscribeStaff } from '../../../data/accounts';
 import { store } from '../../../data/firebase';
@@ -19,6 +20,7 @@ import { AddBarberForm } from './AddBarberForm';
  * Inactive barbers are listed apart. A new barber is added with his login at the bottom.
  */
 export function BarbersPage({ session }: { session: StaffSession }) {
+  const { t } = useTranslation();
   const { barbers, shop } = session;
   const [logins, setLogins] = useState<StaffMember[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,7 +38,7 @@ export function BarbersPage({ session }: { session: StaffSession }) {
       for (const changed of reorderBarbers(active, barber.id, step)) await saveBarber(store, changed);
     } catch (err) {
       console.error(err);
-      setError("Couldn't change the order. Check your connection and try again.");
+      setError(t('barbers.orderError'));
     }
     setBusy(false);
   }
@@ -48,13 +50,10 @@ export function BarbersPage({ session }: { session: StaffSession }) {
 
   return (
     <div className="min-h-screen pb-28">
-      <AdminHeader session={session} title="Barbers" />
+      <AdminHeader session={session} title={t('barbers.title')} />
 
       <main className="mx-auto max-w-xl px-4 pt-6">
-        <p className="mb-3 text-sm text-muted-strong">
-          Customers see barbers in this order. "Any barber" gives a booking to whoever has the
-          fewest that day, then the first in this list.
-        </p>
+        <p className="mb-3 text-sm text-muted-strong">{t('barbers.orderHelp')}</p>
         {error && (
           <Notice tone="error" className="mb-3">
             {error}
@@ -72,7 +71,7 @@ export function BarbersPage({ session }: { session: StaffSession }) {
                 <div className="flex shrink-0 flex-col">
                   <button
                     type="button"
-                    aria-label={`Move ${b.name} up`}
+                    aria-label={t('barbers.moveUp', { name: b.name })}
                     disabled={busy || i === 0}
                     onClick={() => move(b, -1)}
                     className="flex h-9 w-11 items-center justify-center rounded-lg text-ink hover:bg-cream disabled:opacity-30"
@@ -81,7 +80,7 @@ export function BarbersPage({ session }: { session: StaffSession }) {
                   </button>
                   <button
                     type="button"
-                    aria-label={`Move ${b.name} down`}
+                    aria-label={t('barbers.moveDown', { name: b.name })}
                     disabled={busy || i === active.length - 1}
                     onClick={() => move(b, 1)}
                     className="flex h-9 w-11 items-center justify-center rounded-lg text-ink hover:bg-cream disabled:opacity-30"
@@ -96,10 +95,8 @@ export function BarbersPage({ session }: { session: StaffSession }) {
 
         {inactive.length > 0 && (
           <>
-            <h2 className="caps mb-2 mt-8 text-sm font-semibold">Inactive</h2>
-            <p className="mb-3 text-sm text-muted-strong">
-              Hidden from customers. Open one to move or cancel his upcoming bookings, or bring him back.
-            </p>
+            <h2 className="caps mb-2 mt-8 text-sm font-semibold">{t('barbers.inactive')}</h2>
+            <p className="mb-3 text-sm text-muted-strong">{t('barbers.inactiveHelp')}</p>
             <ul className="grid gap-2">
               {inactive.map((b) => (
                 <BarberRow key={b.id} barber={b} login={loginOf(b)} loading={logins === null} isOwner={false} />
@@ -129,8 +126,9 @@ function BarberRow({
   isOwner: boolean;
   controls?: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
-    <li className={`flex items-center gap-1 rounded-2xl border border-line bg-card pr-1 ${barber.active ? '' : 'opacity-70'}`}>
+    <li className={`flex items-center gap-1 rounded-2xl border border-line bg-card pe-1 ${barber.active ? '' : 'opacity-70'}`}>
       <Link
         to={`/admin/barbers/${barber.id}`}
         className="flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-2xl px-3 py-2 hover:bg-cream/50"
@@ -144,17 +142,17 @@ function BarberRow({
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">
             {barber.name}
-            {isOwner && <span className="text-sm font-medium text-muted-strong"> · owner</span>}
+            {isOwner && <span className="text-sm font-medium text-muted-strong">{t('barbers.owner')}</span>}
           </span>
           <span className="block truncate text-sm text-muted-strong">
             {loading
               ? '…'
               : login
-                ? `Login: ${login.username}${login.active ? '' : ' (off)'}`
-                : 'No login yet'}
+                ? t(login.active ? 'barbers.login' : 'barbers.loginOff', { username: login.username })
+                : t('barbers.noLogin')}
           </span>
         </span>
-        <ChevronRight aria-hidden size={18} className="shrink-0 text-muted" />
+        <ChevronRight aria-hidden size={18} className="shrink-0 text-muted rtl:-scale-x-100" />
       </Link>
       {controls}
     </li>

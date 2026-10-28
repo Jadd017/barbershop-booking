@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { subscribeUpcomingBookings } from '../../../data/bookings';
 import { isPermissionDenied } from '../../../data/errors';
 import { store } from '../../../data/firebase';
@@ -32,6 +33,7 @@ interface Props {
  * the owner, moved); saving asks first. Nothing here ever cancels a booking by itself.
  */
 export function ScheduleEditor({ shop, barber, self }: Props) {
+  const { t } = useTranslation();
   const [today] = useState(() => toDateKey(new Date()));
   // Null while nothing is edited, so changes saved elsewhere show up live.
   const [draft, setDraft] = useState<Schedule | null>(null);
@@ -39,7 +41,6 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const whose = self ? 'your' : `${barber.name}'s`;
 
   useEffect(
     () => subscribeUpcomingBookings(store, barber.id, today, setUpcoming, (err) => console.error(err)),
@@ -83,8 +84,8 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
       console.error(err);
       setSaveError(
         isPermissionDenied(err)
-          ? "Couldn't save: the shop's hours may have just changed. Check the hours against them and try again."
-          : "Couldn't save. Check your connection and try again.",
+          ? t('scheduleEditor.shopHoursChanged')
+          : t('common.couldntSave'),
       );
     }
     setSaving(false);
@@ -101,15 +102,19 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
       {conflicts.length > 0 && (
         <div className="mb-8 rounded-2xl border border-brass/50 bg-brass/10 p-4">
           <h2 className="caps font-semibold">
-            {conflicts.length === 1
-              ? `1 booking is outside ${whose} hours`
-              : `${conflicts.length} bookings are outside ${whose} hours`}
-            {draft ? ' (with the changes)' : ''}
+            {t(
+              self
+                ? conflicts.length === 1
+                  ? 'scheduleEditor.outsideYourOne'
+                  : 'scheduleEditor.outsideYourMany'
+                : conflicts.length === 1
+                  ? 'scheduleEditor.outsideTheirOne'
+                  : 'scheduleEditor.outsideTheirMany',
+              { count: conflicts.length, name: barber.name },
+            )}
+            {draft ? t('scheduleEditor.withChanges') : ''}
           </h2>
-          <p className="mb-3 text-sm">
-            On a day off or a day the shop is closed, outside the hours or in a break. They stay
-            booked: cancel them here if needed and let the customer know.
-          </p>
+          <p className="mb-3 text-sm">{t('scheduleEditor.outsideText')}</p>
           <ul className="grid gap-3">
             {conflicts.map((b) => (
               <BookingCard key={b.id} booking={b} showDate cancelOnly />
@@ -120,8 +125,10 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
 
       {outsideShop.length > 0 && (
         <Notice tone="warning" className="mb-6">
-          <p className="font-semibold">{self ? 'Your' : `${barber.name}'s`} hours go outside the shop's opening hours:</p>
-          <ul className="mb-1 list-disc pl-5">
+          <p className="font-semibold">
+            {self ? t('scheduleEditor.yourOutsideShop') : t('scheduleEditor.theirOutsideShop', { name: barber.name })}
+          </p>
+          <ul className="mb-1 list-disc ps-5">
             {outsideShop.map((e) => (
               <li key={e}>{e}</li>
             ))}
@@ -131,13 +138,13 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
             onClick={() => edit({ weeklyHours: trimToShopHours(current.weeklyHours, shop.openingHours) })}
             className={`${linkButton} text-ink underline`}
           >
-            Fit {self ? 'my' : 'his'} hours to the shop's
+            {self ? t('scheduleEditor.fitMine') : t('scheduleEditor.fitHis')}
           </button>
         </Notice>
       )}
 
       <HoursEditor
-        title={self ? 'My hours' : 'Hours'}
+        title={self ? t('scheduleEditor.myHours') : t('scheduleEditor.hours')}
         weeklyHours={current.weeklyHours}
         shopHours={shop.openingHours}
         onChange={(weeklyHours) => edit({ weeklyHours })}
@@ -146,8 +153,8 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
         today={today}
         daysOff={current.daysOff}
         onChange={(daysOff) => edit({ daysOff })}
-        title={self ? 'My days off' : 'Days off'}
-        description={`Customers can't book ${self ? 'you' : barber.name} on these days (vacation, personal days).`}
+        title={self ? t('scheduleEditor.myDaysOff') : t('scheduleEditor.daysOff')}
+        description={self ? t('scheduleEditor.daysOffYou') : t('scheduleEditor.daysOffThem', { name: barber.name })}
         closedAnyway={shop.closedDays}
       />
 
@@ -156,7 +163,9 @@ export function ScheduleEditor({ shop, barber, self }: Props) {
           errors={errors}
           confirm={
             confirming
-              ? `${newConflicts.length === 1 ? '1 booking falls' : `${newConflicts.length} bookings fall`} outside the new hours (listed at the top). They won't be cancelled. Save anyway?`
+              ? newConflicts.length === 1
+                ? t('settings.conflictsOne')
+                : t('settings.conflictsMany', { count: newConflicts.length })
               : null
           }
           saveError={saveError}

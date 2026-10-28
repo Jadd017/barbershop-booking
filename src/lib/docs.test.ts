@@ -48,6 +48,20 @@ describe('settings/shop', () => {
     expect(doc.services.beard).toEqual({ name: 'Beard', durationMinutes: 15, order: 1, price: 5 });
   });
 
+  it("keeps a service's Arabic name, trimmed, and leaves it out when empty", () => {
+    const services = [
+      { id: 'haircut', name: 'Haircut', nameAr: ' قص شعر ', durationMinutes: 30 },
+      { id: 'beard', name: 'Beard', nameAr: '  ', durationMinutes: 15 },
+    ];
+    const doc = toShopDoc({ ...SHOP, services });
+    expect(doc.services.haircut).toEqual({ name: 'Haircut', nameAr: 'قص شعر', durationMinutes: 30, order: 0 });
+    expect(doc.services.beard).toEqual({ name: 'Beard', durationMinutes: 15, order: 1 });
+    expect(fromShopDoc(doc).services).toEqual([
+      { id: 'haircut', name: 'Haircut', nameAr: 'قص شعر', durationMinutes: 30 },
+      { id: 'beard', name: 'Beard', durationMinutes: 15 },
+    ]);
+  });
+
   it('trims the shop name', () => {
     expect(toShopDoc({ ...SHOP, shopName: '  Sassine Maatouk ' }).shopName).toBe('Sassine Maatouk');
   });

@@ -1,10 +1,13 @@
 import { ChevronDown, ChevronLeft, ChevronRight, Coffee, Lock } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
+import i18n from '../../i18n';
 import { subscribeBookingsOn } from '../../data/bookings';
 import { subscribeDay, subscribeDaysOn } from '../../data/days';
 import { store } from '../../data/firebase';
 import { useNow } from '../../hooks/useNow';
+import { useBookingServiceName } from '../../hooks/useServiceNames';
 import { barberHoursOn } from '../../lib/barberSchedule';
 import { initials } from '../../lib/initials';
 import { blockedRanges, notWorkingReason } from '../../lib/staffDay';
@@ -30,8 +33,8 @@ const endOf = (b: ShopStaffBooking) => timeToMinutes(b.startTime) + b.durationMi
 function formatWait(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  if (!h) return `${m} min`;
-  return m ? `${h} h ${m} min` : `${h} h`;
+  if (!h) return i18n.t('dashboard.waitMinutes', { m });
+  return m ? i18n.t('dashboard.waitHoursMinutes', { h, m }) : i18n.t('dashboard.waitHours', { h });
 }
 
 /**
@@ -42,6 +45,7 @@ function formatWait(minutes: number): string {
  * whether the walk-in sheet is open, lives in the history state (AdminNav).
  */
 export function Dashboard({ session }: { session: StaffSession }) {
+  const { t } = useTranslation();
   const { shop, barber: me, barbers, isOwner } = session;
   const location = useLocation();
   const navigate = useNavigate();
@@ -129,17 +133,17 @@ export function Dashboard({ session }: { session: StaffSession }) {
       <AdminHeader
         session={session}
         overline={formatDayLong(date)}
-        title={mode === 'today' ? 'Today' : 'Calendar'}
+        title={mode === 'today' ? t('dashboard.today') : t('dashboard.calendar')}
         wide={isOwner}
       >
         {isOwner && (
-          <p className="caps mt-3 text-xs font-medium tracking-[0.2em] text-brass-light">Whole shop</p>
+          <p className="caps mt-3 text-xs font-medium tracking-[0.2em] text-brass-light">{t('dashboard.wholeShop')}</p>
         )}
         <dl className={`grid grid-cols-3 gap-2 lg:max-w-xl ${isOwner ? 'mt-1' : 'mt-4'}`}>
           {[
-            ['Bookings', header?.bookings],
-            ['Done', header?.done],
-            ['Free slots', header?.freeSlots],
+            [t('dashboard.bookings'), header?.bookings],
+            [t('dashboard.done'), header?.done],
+            [t('dashboard.freeSlots'), header?.freeSlots],
           ].map(([label, value]) => (
             <div
               key={label}
@@ -151,8 +155,8 @@ export function Dashboard({ session }: { session: StaffSession }) {
           ))}
         </dl>
         {!isOwner && myHours && (
-          <p className="mt-3 text-sm text-line">
-            Working {myHours.start}–{myHours.end}
+          <p className="mt-3 text-sm text-line tabular-nums">
+            {t('dashboard.working', { start: myHours.start, end: myHours.end })}
           </p>
         )}
       </AdminHeader>
@@ -164,14 +168,14 @@ export function Dashboard({ session }: { session: StaffSession }) {
               <button
                 type="button"
                 onClick={() => setCalendarDate(addDays(date, -1))}
-                aria-label="Previous day"
+                aria-label={t('dashboard.previousDay')}
                 className={`${buttonOutline} px-3`}
               >
-                <ChevronLeft aria-hidden size={20} />
+                <ChevronLeft aria-hidden size={20} className="rtl:-scale-x-100" />
               </button>
               <input
                 type="date"
-                aria-label="Day"
+                aria-label={t('common.day')}
                 value={date}
                 onChange={(e) => e.target.value && setCalendarDate(e.target.value)}
                 className="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-card px-3 text-center"
@@ -179,10 +183,10 @@ export function Dashboard({ session }: { session: StaffSession }) {
               <button
                 type="button"
                 onClick={() => setCalendarDate(addDays(date, 1))}
-                aria-label="Next day"
+                aria-label={t('dashboard.nextDay')}
                 className={`${buttonOutline} px-3`}
               >
-                <ChevronRight aria-hidden size={20} />
+                <ChevronRight aria-hidden size={20} className="rtl:-scale-x-100" />
               </button>
             </div>
             {date !== today && (
@@ -191,23 +195,23 @@ export function Dashboard({ session }: { session: StaffSession }) {
                 onClick={() => setCalendarDate(today)}
                 className={`${linkButton} text-ink underline`}
               >
-                Back to today
+                {t('dashboard.backToToday')}
               </button>
             )}
           </div>
         )}
 
         {loadError ? (
-          <Notice tone="error">Couldn't load bookings. Check your connection and refresh.</Notice>
+          <Notice tone="error">{t('dashboard.loadError')}</Notice>
         ) : !items ? (
-          <p className="text-sm text-muted-strong">Loading…</p>
+          <p className="text-sm text-muted-strong">{t('common.loading')}</p>
         ) : !isOwner ? (
           column(me, false)
         ) : (
           <>
             {/* Phone: one barber at a time. */}
             <div className="lg:hidden">
-              <div role="group" aria-label="Barber" className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1">
+              <div role="group" aria-label={t('dashboard.barber')} className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1">
                 {shown.map((b) => {
                   const c = counts.get(b.id);
                   const current = b.id === selected?.id;
@@ -217,7 +221,7 @@ export function Dashboard({ session }: { session: StaffSession }) {
                       type="button"
                       aria-pressed={current}
                       onClick={() => setSelectedId(b.id)}
-                      className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm font-semibold ${
+                      className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border py-1 ps-1 pe-3 text-sm font-semibold ${
                         current ? 'border-charcoal bg-charcoal text-cream' : 'border-line bg-card text-ink'
                       }`}
                     >
@@ -291,6 +295,7 @@ interface ColumnProps {
 
 /** One barber's day: up next, later and earlier today (or the whole day), and cancelled ones. */
 function BarberColumn({ shop, barber, self, heading, date, mode, nowMinutes, bookings, day, counts }: ColumnProps) {
+  const { t } = useTranslation();
   const [showCancelled, setShowCancelled] = useState(false);
   const hours = barberHoursOn(shop, barber, date);
   const offReason = notWorkingReason(shop, barber, date, self);
@@ -340,12 +345,12 @@ function BarberColumn({ shop, barber, self, heading, date, mode, nowMinutes, boo
           <div className="min-w-0">
             <h2 className="caps truncate text-lg font-semibold">
               {barber.name}
-              {!barber.active && <span className="text-sm font-medium text-muted-strong"> · inactive</span>}
+              {!barber.active && <span className="text-sm font-medium text-muted-strong">{t('dashboard.inactive')}</span>}
             </h2>
             <p className="text-sm text-muted-strong tabular-nums">
               {counts
-                ? `${counts.bookings} booked · ${counts.done} done · ${counts.freeSlots} free`
-                : 'Loading…'}
+                ? t('dashboard.counts', { bookings: counts.bookings, done: counts.done, free: counts.freeSlots })
+                : t('common.loading')}
               {hours && ` · ${hours.start}–${hours.end}`}
             </p>
           </div>
@@ -362,22 +367,22 @@ function BarberColumn({ shop, barber, self, heading, date, mode, nowMinutes, boo
         <>
           {upNext && <UpNextCard booking={upNext} nowMinutes={nowMinutes} />}
 
-          <SectionLabel className={upNext ? 'mt-6' : ''}>Later today</SectionLabel>
+          <SectionLabel className={upNext ? 'mt-6' : ''}>{t('dashboard.laterToday')}</SectionLabel>
           {later.length === 0 ? (
-            <Empty>{upNext ? 'Nothing else today.' : 'No more bookings today.'}</Empty>
+            <Empty>{upNext ? t('dashboard.nothingElse') : t('dashboard.noMore')}</Empty>
           ) : (
             <EntryList entries={later} />
           )}
 
           {earlier.length > 0 && (
             <>
-              <SectionLabel className="mt-6">Earlier today</SectionLabel>
+              <SectionLabel className="mt-6">{t('dashboard.earlierToday')}</SectionLabel>
               <EntryList entries={earlier.map(asEntry)} />
             </>
           )}
         </>
       ) : wholeDay.length === 0 ? (
-        <Empty>No bookings on this day.</Empty>
+        <Empty>{t('dashboard.noBookingsDay')}</Empty>
       ) : (
         <EntryList entries={wholeDay} />
       )}
@@ -395,7 +400,7 @@ function BarberColumn({ shop, barber, self, heading, date, mode, nowMinutes, boo
               size={16}
               className={showCancelled ? 'rotate-180 transition' : 'transition'}
             />
-            {showCancelled ? 'Hide' : 'Show'} cancelled ({cancelled.length})
+            {t(showCancelled ? 'dashboard.hideCancelled' : 'dashboard.showCancelled', { count: cancelled.length })}
           </button>
           {showCancelled && <EntryList entries={cancelled.map(asEntry)} />}
         </div>
@@ -414,15 +419,18 @@ function Empty({ children }: { children: string }) {
 
 /** The next customer, with big Done / No-show buttons. */
 function UpNextCard({ booking, nowMinutes }: { booking: ShopStaffBooking; nowMinutes: number }) {
+  const { t } = useTranslation();
+  const serviceName = useBookingServiceName();
   const wait = timeToMinutes(booking.startTime) - nowMinutes;
   return (
     <section
-      aria-label="Up next"
+      aria-label={t('dashboard.upNext')}
       className="rounded-2xl border-2 border-brass bg-card p-4 shadow-md"
     >
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="caps text-sm font-semibold">
-          Up next <span className="text-line">·</span> {wait > 0 ? `In ${formatWait(wait)}` : 'Now'}
+          {t('dashboard.upNext')} <span className="text-line">·</span>{' '}
+          {wait > 0 ? t('dashboard.inWait', { wait: formatWait(wait) }) : t('dashboard.now')}
         </p>
         <StatusChip status={booking.status} />
       </div>
@@ -434,7 +442,7 @@ function UpNextCard({ booking, nowMinutes }: { booking: ShopStaffBooking; nowMin
       </p>
       <p className="text-2xl font-semibold">{booking.name}</p>
       <p className="mb-4 text-muted">
-        {booking.serviceName} · {booking.durationMinutes} min
+        {serviceName(booking)} · {t('common.minutes', { minutes: booking.durationMinutes })}
       </p>
       <BookingActions booking={booking} />
     </section>
@@ -442,6 +450,7 @@ function UpNextCard({ booking, nowMinutes }: { booking: ShopStaffBooking; nowMin
 }
 
 function EntryList({ entries }: { entries: Entry[] }) {
+  const { t } = useTranslation();
   return (
     <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-card">
       {entries.map((e) =>
@@ -458,8 +467,10 @@ function EntryList({ entries }: { entries: Entry[] }) {
             ) : (
               <Lock aria-hidden size={16} />
             )}
-            <span className="caps text-xs font-medium">{e.kind === 'break' ? 'Break' : 'Blocked'}</span>
-            <span className="ml-auto tabular-nums">until {minutesToTime(e.end)}</span>
+            <span className="caps text-xs font-medium">
+              {e.kind === 'break' ? t('dashboard.break') : t('dashboard.blocked')}
+            </span>
+            <span className="ms-auto tabular-nums">{t('dashboard.until', { time: minutesToTime(e.end) })}</span>
           </li>
         ),
       )}
@@ -469,6 +480,7 @@ function EntryList({ entries }: { entries: Entry[] }) {
 
 /** A compact line that opens to show the details and actions. */
 function BookingRow({ booking }: { booking: ShopStaffBooking }) {
+  const serviceName = useBookingServiceName();
   const [open, setOpen] = useState(false);
   return (
     <li className={booking.status === 'cancelled' ? 'opacity-60' : ''}>
@@ -476,7 +488,7 @@ function BookingRow({ booking }: { booking: ShopStaffBooking }) {
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left hover:bg-cream/50"
+        className="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-start hover:bg-cream/50"
       >
         <span className="w-14 shrink-0">
           <span className="caps block font-semibold tabular-nums">{booking.startTime}</span>
@@ -484,7 +496,7 @@ function BookingRow({ booking }: { booking: ShopStaffBooking }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold">{booking.name}</span>
-          <span className="block truncate text-sm text-muted">{booking.serviceName}</span>
+          <span className="block truncate text-sm text-muted">{serviceName(booking)}</span>
         </span>
         <StatusChip status={booking.status} />
         <ChevronDown

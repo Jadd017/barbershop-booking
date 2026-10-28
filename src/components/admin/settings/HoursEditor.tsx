@@ -1,5 +1,6 @@
+import { useTranslation } from 'react-i18next';
 import { MAX_BREAKS_PER_DAY } from '../../../config';
-import { WEEKDAY_NAMES } from '../../../lib/schedule';
+import { WEEKDAY_NAMES, weekdayName } from '../../../lib/schedule';
 import { minutesToTime, timeToMinutes } from '../../../lib/time';
 import type { DayHours, OpeningHours } from '../../../types';
 import { cardClass, Section, TimeSelect } from './fields';
@@ -25,7 +26,8 @@ function newBreak(day: DayHours) {
   return { start: minutesToTime(start), end: minutesToTime(start + 30) };
 }
 
-export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', shopHours, breaks = true }: Props) {
+export function HoursEditor({ weeklyHours, onChange, title, shopHours, breaks = true }: Props) {
+  const { t } = useTranslation();
   // A barber's own days are "Working" or not; the shop's "Open" or "Closed".
   const own = shopHours !== undefined;
 
@@ -40,11 +42,11 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
 
   return (
     <Section
-      title={title}
+      title={title ?? t('hours.openingHours')}
       description={
         breaks
-          ? `Up to ${MAX_BREAKS_PER_DAY} breaks per day.${own ? " Hours must be within the shop's opening hours." : ''}`
-          : "When the shop is open. Each barber's own hours and breaks fit inside these."
+          ? t('hours.breaksHelp', { max: MAX_BREAKS_PER_DAY }) + (own ? t('hours.withinShop') : '')
+          : t('hours.shopHelp')
       }
     >
       <ul className="grid gap-3">
@@ -54,14 +56,15 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
           const limits = shop && !shopClosed ? { min: shop.start, max: shop.end } : {};
           // A day the shop is closed can still be switched off, never on.
           const locked = shopClosed && day.closed;
+          const name = weekdayName(i);
           return (
             <li key={WEEKDAY_NAMES[i]} className={cardClass}>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="font-semibold">{WEEKDAY_NAMES[i]}</p>
+                  <p className="font-semibold">{name}</p>
                   {shop && (
                     <p className="text-xs text-muted-strong tabular-nums">
-                      {shopClosed ? 'Shop closed' : `Shop open ${shop.start}–${shop.end}`}
+                      {shopClosed ? t('hours.shopClosed') : t('hours.shopOpen', { start: shop.start, end: shop.end })}
                     </p>
                   )}
                 </div>
@@ -73,24 +76,24 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
                     onChange={(e) => setDay(i, { ...day, closed: !e.target.checked })}
                     className="h-5 w-5 accent-charcoal"
                   />
-                  {own ? 'Working' : 'Open'}
+                  {own ? t('hours.working') : t('hours.open')}
                 </label>
               </div>
 
               {day.closed ? (
-                <p className="mt-1 text-sm text-muted">{own ? 'Not working' : 'Closed'}</p>
+                <p className="mt-1 text-sm text-muted">{own ? t('hours.notWorking') : t('hours.closed')}</p>
               ) : (
                 <>
                   <div className="mt-3 flex items-center gap-2">
                     <TimeSelect
-                      label={`${WEEKDAY_NAMES[i]} ${own ? 'start' : 'opening'} time`}
+                      label={t(own ? 'hours.startTime' : 'hours.openingTime', { day: name })}
                       value={day.start}
                       onChange={(start) => setDay(i, { ...day, start })}
                       {...limits}
                     />
-                    <span className="text-muted">to</span>
+                    <span className="text-muted">{t('common.toTime')}</span>
                     <TimeSelect
-                      label={`${WEEKDAY_NAMES[i]} ${own ? 'end' : 'closing'} time`}
+                      label={t(own ? 'hours.endTime' : 'hours.closingTime', { day: name })}
                       value={day.end}
                       onChange={(end) => setDay(i, { ...day, end })}
                       {...limits}
@@ -99,9 +102,9 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
 
                   {breaks && day.breaks.map((b, j) => (
                     <div key={j} className="mt-2 flex items-center gap-2">
-                      <span className="w-12 shrink-0 text-sm text-muted">Break</span>
+                      <span className="w-14 shrink-0 text-sm text-muted">{t('hours.break')}</span>
                       <TimeSelect
-                        label={`${WEEKDAY_NAMES[i]} break ${j + 1} start`}
+                        label={t('hours.breakStart', { day: name, n: j + 1 })}
                         value={b.start}
                         onChange={(start) =>
                           setDay(i, {
@@ -113,7 +116,7 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
                       />
                       <span className="text-muted">–</span>
                       <TimeSelect
-                        label={`${WEEKDAY_NAMES[i]} break ${j + 1} end`}
+                        label={t('hours.breakEnd', { day: name, n: j + 1 })}
                         value={b.end}
                         onChange={(end) =>
                           setDay(i, {
@@ -125,7 +128,7 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
                       />
                       <button
                         type="button"
-                        aria-label={`Remove ${WEEKDAY_NAMES[i]} break ${j + 1}`}
+                        aria-label={t('hours.removeBreak', { day: name, n: j + 1 })}
                         onClick={() =>
                           setDay(i, { ...day, breaks: day.breaks.filter((_, k) => k !== j) })
                         }
@@ -143,11 +146,11 @@ export function HoursEditor({ weeklyHours, onChange, title = 'Opening hours', sh
                         onClick={() => setDay(i, { ...day, breaks: [...day.breaks, newBreak(day)] })}
                         className="inline-flex min-h-11 items-center underline-offset-4 hover:underline"
                       >
-                        + Add break
+                        {t('hours.addBreak')}
                       </button>
                     )}
                     <button type="button" onClick={() => copyToAll(day)} className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
-                      Use these hours every day
+                      {t('hours.everyDay')}
                     </button>
                   </div>
                 </>

@@ -229,6 +229,21 @@ describe('shop settings and barbers', () => {
     expect(branding?.logo).toBeNull();
   });
 
+  it("a service's optional Arabic name saves, and bookings for it still store the English name", async () => {
+    const shop = await first((ok, fail) => shopApi.subscribeShop(anyone(), ok, fail));
+    const services = shop!.services.map((s) => (s.id === HAIRCUT.id ? { ...s, nameAr: 'قص شعر' } : s));
+    await shopApi.saveShop(owner(), { ...shop!, services });
+    const saved = await first((ok, fail) => shopApi.subscribeShop(anyone(), ok, fail));
+    expect(saved?.services.find((s) => s.id === HAIRCUT.id)?.nameAr).toBe('قص شعر');
+
+    const haircut = saved!.services.find((s) => s.id === HAIRCUT.id)!;
+    const booked = await bookings.createBooking(customer(RAMI), request({ service: haircut }));
+    expect(booked).toMatchObject({ serviceName: HAIRCUT.name, serviceNameAr: 'قص شعر' });
+    const mine = await first((ok, fail) => bookings.subscribeMyBookings(customer(RAMI), RAMI.uid, ok, fail));
+    expect(mine).toEqual([expect.objectContaining({ serviceId: HAIRCUT.id, serviceName: HAIRCUT.name })]);
+    await bookings.cancelMyBooking(customer(RAMI), booked.bookingCode);
+  });
+
   it('barbers are listed in display order, inactive ones too', async () => {
     await seedBarber({ ...BARBERS[1], active: false });
     const list = await first((ok, fail) => shopApi.subscribeBarbers(anyone(), ok, fail));

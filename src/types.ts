@@ -6,7 +6,10 @@ export type DateKey = string;
 
 export interface Service {
   id: string;
+  /** The English name, and the one bookings store and firestore.rules check. */
   name: string;
+  /** Shown instead of `name` when the site is in Arabic; not set: `name` is shown. */
+  nameAr?: string;
   durationMinutes: number;
   /** In US dollars, shown to customers. Not set: no price shown. */
   price?: number;
@@ -79,6 +82,8 @@ export interface ConfirmedBooking {
   startTime: TimeString;
   /** The service's price when booked, if it had one. Only shown, never stored in Firestore. */
   price?: number;
+  /** The service's Arabic name when booked, if it had one. Only shown, never stored in Firestore. */
+  serviceNameAr?: string;
 }
 
 export type BookingStatus = 'booked' | 'cancelled' | 'done' | 'no-show';
@@ -86,6 +91,8 @@ export type BookingStatus = 'booked' | 'cancelled' | 'done' | 'no-show';
 /** One of the signed-in customer's bookings, on the "My bookings" page. */
 export interface CustomerBooking {
   bookingCode: string;
+  /** To show the service's current Arabic name; missing on bookings from before phase 3. */
+  serviceId?: string;
   serviceName: string;
   durationMinutes: number;
   date: DateKey;
@@ -111,6 +118,8 @@ export interface AdminBooking {
   bookingCode: string;
   name: string;
   phone: string | null;
+  /** To show the service's current Arabic name; missing on bookings from before phase 3. */
+  serviceId?: string;
   serviceName: string;
   durationMinutes: number;
   date: DateKey;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { toDateKey } from '../../../lib/time';
 import { AdminHeader } from '../AdminHeader';
 import { AdminNav } from '../AdminNav';
@@ -15,12 +16,13 @@ import { SettingsTabs } from './SettingsTabs';
  * reaches this page as the "Me" tab of his settings.
  */
 export function MySettingsPage({ session }: { session: StaffSession }) {
+  const { t } = useTranslation();
   const { shop, barber, user, staff, isOwner } = session;
   const [today] = useState(() => toDateKey(new Date()));
 
   return (
     <div className="min-h-screen pb-64">
-      <AdminHeader session={session} title="Settings">
+      <AdminHeader session={session} title={t('settings.title')}>
         {isOwner && <SettingsTabs active="me" />}
       </AdminHeader>
 

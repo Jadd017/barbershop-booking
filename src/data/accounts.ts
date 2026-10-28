@@ -37,6 +37,7 @@ import {
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
+import i18n from '../i18n';
 import type { StaffMember, StaffRole } from '../types';
 import { OwnAccountError, UsernameTakenError, WrongLoginError } from './errors';
 import { AUTH_EMULATOR_URL, firebaseConfig, useEmulator } from './firebase';
@@ -65,14 +66,14 @@ export function normalizeUsername(input: string): string {
 export function usernameErrors(username: string): string[] {
   return /^[a-z0-9]{3,20}$/.test(username)
     ? []
-    : ['A username is 3 to 20 letters (a–z) and digits, without spaces.'];
+    : [i18n.t('accounts.usernameRule')];
 }
 
 /** What's wrong with a new password; empty if it can be used. */
 export function passwordErrors(password: string): string[] {
   return password.length >= MIN_PASSWORD_LENGTH
     ? []
-    : [`A password needs at least ${MIN_PASSWORD_LENGTH} characters.`];
+    : [i18n.t('accounts.passwordRule', { min: MIN_PASSWORD_LENGTH })];
 }
 
 /** 4 random lower-case letters and digits, for internal emails and app names. */

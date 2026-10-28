@@ -1,4 +1,5 @@
 import { CalendarDays, House, Settings, UserPlus, Users, type LucideIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { useOwner } from './session';
 
@@ -16,33 +17,34 @@ export type AdminTab = 'today' | 'calendar' | 'barbers' | 'settings';
  * has Barbers, and his Settings opens the shop's (his own are a tab away).
  */
 export function AdminNav({ active }: { active: AdminTab }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const owner = useOwner() !== null;
   const mode = active === 'today' || active === 'calendar' ? active : 'today';
 
   const items: { label: string; Icon: LucideIcon; tab?: AdminTab; go: () => void }[] = [
     {
-      label: 'Today',
+      label: t('nav.today'),
       Icon: House,
       tab: 'today',
       go: () => navigate('/admin', { state: { mode: 'today' } satisfies AdminNavState }),
     },
     {
-      label: 'Calendar',
+      label: t('nav.calendar'),
       Icon: CalendarDays,
       tab: 'calendar',
       go: () => navigate('/admin', { state: { mode: 'calendar' } satisfies AdminNavState }),
     },
     {
-      label: 'Walk-in',
+      label: t('nav.walkIn'),
       Icon: UserPlus,
       go: () => navigate('/admin', { state: { mode, walkIn: true } satisfies AdminNavState }),
     },
     ...(owner
-      ? [{ label: 'Barbers', Icon: Users, tab: 'barbers' as const, go: () => navigate('/admin/barbers') }]
+      ? [{ label: t('nav.barbers'), Icon: Users, tab: 'barbers' as const, go: () => navigate('/admin/barbers') }]
       : []),
     {
-      label: 'Settings',
+      label: t('nav.settings'),
       Icon: Settings,
       tab: 'settings',
       go: () => navigate(owner ? '/admin/shop' : '/admin/settings'),
@@ -51,7 +53,7 @@ export function AdminNav({ active }: { active: AdminTab }) {
 
   return (
     <nav
-      aria-label="Staff"
+      aria-label={t('nav.label')}
       className="fixed inset-x-0 bottom-0 z-20 border-t border-brass/40 bg-charcoal pb-[env(safe-area-inset-bottom)]"
     >
       <ul className={`mx-auto grid max-w-xl ${owner ? 'grid-cols-5' : 'grid-cols-4'}`}>

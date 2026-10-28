@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MAX_BARBER_NAME_LENGTH, MIN_BARBER_NAME_LENGTH } from '../../../config';
 import { store } from '../../../data/firebase';
 import { saveBarber } from '../../../data/shop';
@@ -8,6 +9,7 @@ import { cardClass, Section } from '../settings/fields';
 
 /** The barber's name, as customers see it (his initials come from it). Saved on its own. */
 export function BarberDetails({ barber }: { barber: Barber }) {
+  const { t } = useTranslation();
   // Null while not edited, so a rename saved elsewhere shows up.
   const [name, setName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,20 +25,20 @@ export function BarberDetails({ barber }: { barber: Barber }) {
     try {
       await saveBarber(store, { ...barber, name: trimmed });
       setName(null);
-      setMessage({ error: false, text: 'Name saved. New bookings show it; past ones keep the old name.' });
+      setMessage({ error: false, text: t('barbers.nameSaved') });
     } catch (err) {
       console.error(err);
-      setMessage({ error: true, text: "Couldn't save. Check your connection and try again." });
+      setMessage({ error: true, text: t('common.couldntSave') });
     }
     setBusy(false);
   }
 
   return (
-    <Section title="Name">
+    <Section title={t('barbers.nameSection')}>
       <div className={cardClass}>
         <input
           type="text"
-          aria-label="Name"
+          aria-label={t('common.name')}
           autoComplete="off"
           maxLength={MAX_BARBER_NAME_LENGTH}
           value={value}
@@ -48,7 +50,7 @@ export function BarberDetails({ barber }: { barber: Barber }) {
         />
         {changed && invalid && (
           <p className="mt-2 text-sm text-pole-red">
-            The name must be {MIN_BARBER_NAME_LENGTH} to {MAX_BARBER_NAME_LENGTH} characters.
+            {t('schedule.barberNameLength', { min: MIN_BARBER_NAME_LENGTH, max: MAX_BARBER_NAME_LENGTH })}
           </p>
         )}
         {message && (
@@ -56,7 +58,7 @@ export function BarberDetails({ barber }: { barber: Barber }) {
         )}
         {changed && (
           <button type="button" onClick={save} disabled={busy || invalid} className={`${buttonDark} mt-3 w-full`}>
-            {busy ? 'Saving…' : 'Save name'}
+            {busy ? t('common.saving') : t('barbers.saveName')}
           </button>
         )}
       </div>

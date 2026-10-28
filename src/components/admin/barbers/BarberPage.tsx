@@ -1,5 +1,6 @@
 import { ChevronLeft } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { deactivateBarber, reactivateBarber, subscribeStaff } from '../../../data/accounts';
 import { subscribeUpcomingBookings } from '../../../data/bookings';
@@ -23,6 +24,7 @@ import { LoginEditor } from './LoginEditor';
  * bookings are listed here, each with Move (to a barber free then) or Cancel.
  */
 export function BarberPage({ session, barberId }: { session: StaffSession; barberId: string }) {
+  const { t } = useTranslation();
   const { shop, barbers } = session;
   const barber = barbers.find((b) => b.id === barberId);
   const [today] = useState(() => toDateKey(new Date()));
@@ -45,9 +47,9 @@ export function BarberPage({ session, barberId }: { session: StaffSession; barbe
   if (!barber) {
     return (
       <PageMessage>
-        No barber "{barberId}".{' '}
+        {t('barbers.notFound', { id: barberId })}{' '}
         <Link to="/admin/barbers" className="underline">
-          Back to barbers
+          {t('barbers.backToBarbers')}
         </Link>
       </PageMessage>
     );
@@ -66,7 +68,7 @@ export function BarberPage({ session, barberId }: { session: StaffSession; barbe
       setConfirming(false);
     } catch (err) {
       console.error(err);
-      setError("Couldn't save. Check your connection and try again.");
+      setError(t('common.couldntSave'));
     }
     setBusy(false);
   }
@@ -78,20 +80,18 @@ export function BarberPage({ session, barberId }: { session: StaffSession; barbe
           to="/admin/barbers"
           className="mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-brass-light hover:underline"
         >
-          <ChevronLeft aria-hidden size={16} />
-          All barbers
+          <ChevronLeft aria-hidden size={16} className="rtl:-scale-x-100" />
+          {t('barbers.allBarbers')}
         </Link>
       </AdminHeader>
 
       <main className="mx-auto max-w-xl px-4 pt-6">
         {!barber.active && (
           <div className="mb-8 rounded-2xl border border-brass/50 bg-brass/10 p-4">
-            <h2 className="caps font-semibold">{barber.name} is inactive</h2>
+            <h2 className="caps font-semibold">{t('barbers.isInactive', { name: barber.name })}</h2>
             <p className="mb-3 text-sm">
-              Customers can't see or book him, and his login is off.{' '}
-              {booked.length > 0
-                ? 'Move each of his upcoming bookings to another barber, or cancel it.'
-                : 'He has no upcoming bookings.'}
+              {t('barbers.inactiveText')}{' '}
+              {booked.length > 0 ? t('barbers.moveOrCancel') : t('barbers.noUpcoming')}
             </p>
             {booked.length > 0 && (
               <ul className="mb-4 grid gap-3">
@@ -101,7 +101,7 @@ export function BarberPage({ session, barberId }: { session: StaffSession; barbe
               </ul>
             )}
             <button type="button" onClick={() => setActive(true)} disabled={busy} className={`${buttonOutline} w-full`}>
-              {busy ? 'Saving…' : `Bring ${barber.name} back`}
+              {busy ? t('common.saving') : t('barbers.bringBack', { name: barber.name })}
             </button>
           </div>
         )}
@@ -111,11 +111,11 @@ export function BarberPage({ session, barberId }: { session: StaffSession; barbe
         <BlockedTimes today={today} shop={shop} barber={barber} self={self} />
 
         {self ? (
-          <Section title="Login">
+          <Section title={t('barbers.loginSection')}>
             <p className={`${cardClass} text-sm`}>
-              This is you. Change your password in{' '}
+              {t('barbers.thisIsYou')}{' '}
               <Link to="/admin/settings" className="font-semibold underline">
-                Settings → Me
+                {t('barbers.settingsMe')}
               </Link>
               .
             </p>
@@ -125,25 +125,21 @@ export function BarberPage({ session, barberId }: { session: StaffSession; barbe
         )}
 
         {!self && barber.active && (
-          <Section title="Deactivate">
+          <Section title={t('barbers.deactivate')}>
             <div className={cardClass}>
-              <p className="mb-3 text-sm">
-                For a barber who left: customers no longer see or book him, and his login stops
-                working at once. His bookings stay; you'll get the list to move or cancel them.
-                You can bring him back later.
-              </p>
+              <p className="mb-3 text-sm">{t('barbers.deactivateText')}</p>
               {confirming ? (
                 <div className="grid grid-cols-2 gap-2">
                   <button type="button" onClick={() => setConfirming(false)} disabled={busy} className={buttonOutline}>
-                    Keep him
+                    {t('barbers.keepHim')}
                   </button>
                   <button type="button" onClick={() => setActive(false)} disabled={busy} className={buttonDanger}>
-                    {busy ? 'Saving…' : 'Yes, deactivate'}
+                    {busy ? t('common.saving') : t('barbers.yesDeactivate')}
                   </button>
                 </div>
               ) : (
                 <button type="button" onClick={() => setConfirming(true)} className={`${buttonDangerOutline} w-full`}>
-                  Deactivate {barber.name}
+                  {t('barbers.deactivateName', { name: barber.name })}
                 </button>
               )}
             </div>

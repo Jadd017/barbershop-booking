@@ -1,5 +1,6 @@
 import { ArrowRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { BarberPicker } from '../components/BarberPicker';
 import { BookingForm } from '../components/BookingForm';
 import { Confirmation } from '../components/Confirmation';
@@ -22,12 +23,14 @@ import { windowDaysFor } from '../lib/barberSchedule';
 import { clearLastBooking, loadLastBooking, saveLastBooking, type LastBooking } from '../lib/lastBooking';
 import { clearPendingBooking, loadPendingBooking, savePendingBooking } from '../lib/pendingBooking';
 import { weeklyHoursSummary } from '../lib/schedule';
-import { formatPrice } from '../lib/shop';
+import { formatPrice, localServiceName } from '../lib/shop';
+import { dateLocale } from '../i18n';
 import { fromDateKey, minutesToTime, timeToMinutes, toDateKey } from '../lib/time';
 import { bookingWhatsappLink } from '../lib/whatsapp';
 import type { DateKey, ShopConfirmedBooking, TimeString } from '../types';
 
 export function BookingPage() {
+  const { t } = useTranslation();
   const customer = useCustomer();
   // Live, so changes the owner and barbers make (hours, services, days off) show up straight away.
   const { shop, barbers, error: shopError } = useShop();
@@ -164,13 +167,13 @@ export function BookingPage() {
 
   if (shopError) {
     return (
-      <PageMessage error>Couldn't load the booking page. Check your connection and refresh.</PageMessage>
+      <PageMessage error>{t('booking.loadError')}</PageMessage>
     );
   }
 
-  if (shop === undefined || barbers === undefined) return <PageMessage>Loading…</PageMessage>;
+  if (shop === undefined || barbers === undefined) return <PageMessage>{t('common.loading')}</PageMessage>;
 
-  if (shop === null) return <PageMessage>Online booking opens soon.</PageMessage>;
+  if (shop === null) return <PageMessage>{t('booking.opensSoon')}</PageMessage>;
 
   const end = selectedTime && service
     ? minutesToTime(timeToMinutes(selectedTime) + service.durationMinutes)
@@ -190,17 +193,17 @@ export function BookingPage() {
 
       <main className="mx-auto max-w-xl px-4 pt-6">
         <section className="mb-8">
-          <StepLabel step={1}>Service</StepLabel>
+          <StepLabel step={1}>{t('common.service')}</StepLabel>
           <ServicePicker services={shop.services} selectedId={serviceId} onSelect={selectService} />
         </section>
 
         {service && active.length === 0 && (
-          <p className="mb-8 text-sm text-muted-strong">No barbers are taking bookings right now.</p>
+          <p className="mb-8 text-sm text-muted-strong">{t('booking.noBarbers')}</p>
         )}
 
         {service && active.length > 1 && (
           <section className="mb-8">
-            <StepLabel step={2}>Barber</StepLabel>
+            <StepLabel step={2}>{t('common.barber')}</StepLabel>
             <BarberPicker barbers={active} selected={barberId} onSelect={selectBarber} />
           </section>
         )}
@@ -208,27 +211,25 @@ export function BookingPage() {
         {service && barberId !== undefined && (
           <>
             <section className="mb-8">
-              <StepLabel step={dayStep}>Day</StepLabel>
+              <StepLabel step={dayStep}>{t('common.day')}</StepLabel>
               {days.length > 0 ? (
                 <DayPicker days={allDays} today={today} selected={day} onSelect={selectDay} />
               ) : (
                 <p className="text-sm text-muted-strong">
-                  {barber ? `${barber.name} has no days open for booking right now.` : 'No days open for booking right now.'}
+                  {barber ? t('booking.barberNoDays', { name: barber.name }) : t('booking.noDays')}
                 </p>
               )}
             </section>
 
             {days.length > 0 && (
               <section className="mb-8">
-                <StepLabel step={dayStep + 1}>Time</StepLabel>
+                <StepLabel step={dayStep + 1}>{t('common.time')}</StepLabel>
                 {slotsError ? (
-                  <Notice tone="error">
-                    Couldn't load available times. Check your connection and refresh.
-                  </Notice>
+                  <Notice tone="error">{t('booking.timesError')}</Notice>
                 ) : startTimes ? (
                   <TimeGrid options={startTimes} selected={selectedTime} onSelect={setTime} />
                 ) : (
-                  <p className="text-sm text-muted-strong">Loading times…</p>
+                  <p className="text-sm text-muted-strong">{t('booking.loadingTimes')}</p>
                 )}
               </section>
             )}
@@ -236,10 +237,10 @@ export function BookingPage() {
         )}
 
         <section className="border-t border-line pt-5 text-sm text-muted-strong">
-          <h2 className="caps mb-1 text-xs font-semibold text-ink">Opening hours</h2>
+          <h2 className="caps mb-1 text-xs font-semibold text-ink">{t('booking.openingHours')}</h2>
           <ul>
             {weeklyHoursSummary(shop.openingHours).map((line) => (
-              <li key={line}>{line}</li>
+              <li key={line} className="tabular-nums">{line}</li>
             ))}
           </ul>
           {shop.shopAddress && <p className="mt-2">{shop.shopAddress}</p>}
@@ -250,20 +251,22 @@ export function BookingPage() {
         <div className="fixed inset-x-0 bottom-0 z-10 bg-charcoal pb-[env(safe-area-inset-bottom)] text-cream shadow-[0_-4px_16px_rgba(0,0,0,0.25)]">
           {(signInError || (!customer && isInAppBrowser())) && (
             <p role="alert" className="mx-auto max-w-xl px-4 pt-3 text-sm text-brass-light">
-              {signInError ??
-                "Google sign-in may not work inside this app. If it fails, open this page in Chrome or Safari."}
+              {signInError ?? t('signIn.inAppWarning')}
             </p>
           )}
           <div className="mx-auto flex max-w-xl items-center justify-between gap-3 px-4 py-3">
             <div className="min-w-0 text-sm">
               <p className="truncate font-semibold">
-                {service.name}
+                {localServiceName(service)}
                 {service.price !== undefined && (
-                  <span className="text-brass-light"> · {formatPrice(service.price)}</span>
+                  <span className="text-brass-light">
+                    {' · '}
+                    <bdi dir="ltr">{formatPrice(service.price)}</bdi>
+                  </span>
                 )}
               </p>
               <p className="text-line">
-                {fromDateKey(day).toLocaleDateString('en-US', {
+                {fromDateKey(day).toLocaleDateString(dateLocale(), {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
@@ -271,10 +274,12 @@ export function BookingPage() {
                 · <span className="tabular-nums">{selectedTime}–{end}</span>
               </p>
               {!onlyBarber && (
-                <p className="truncate text-line">{barber ? `With ${barber.name}` : 'Any barber'}</p>
+                <p className="truncate text-line">
+                  {barber ? t('booking.withBarber', { name: barber.name }) : t('booking.anyBarber')}
+                </p>
               )}
               {customer === null && (
-                <p className="text-xs text-line">You'll sign in with Google next</p>
+                <p className="text-xs text-line">{t('booking.signInNext')}</p>
               )}
             </div>
             <button
@@ -283,8 +288,8 @@ export function BookingPage() {
               disabled={signingIn || customer === undefined}
               className={`${buttonBrass} caps shrink-0 px-5 text-base`}
             >
-              {signingIn ? 'Signing in…' : 'Book now'}
-              {!signingIn && <ArrowRight aria-hidden size={18} />}
+              {signingIn ? t('signIn.signingIn') : t('booking.bookNow')}
+              {!signingIn && <ArrowRight aria-hidden size={18} className="rtl:-scale-x-100" />}
             </button>
           </div>
         </div>

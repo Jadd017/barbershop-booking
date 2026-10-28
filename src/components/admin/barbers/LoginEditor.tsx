@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   createLogin,
   MIN_PASSWORD_LENGTH,
@@ -26,6 +27,7 @@ interface Props {
  * working (docs/ARCHITECTURE.md, 5.3). A barber with no login (if creating it failed) gets one here.
  */
 export function LoginEditor({ barber, logins }: Props) {
+  const { t } = useTranslation();
   const current = logins?.find((l) => l.active) ?? logins?.[0];
   const [open, setOpen] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
@@ -47,17 +49,15 @@ export function LoginEditor({ barber, logins }: Props) {
       if (current) await newLogin(store, { username: login, password });
       else await createLogin(store, { username: login, password, barberId: barber.id });
       setDone(
-        current
-          ? `New login ready. ${barber.name} logs in as "${login}" with the new password; the old one no longer works.`
-          : `Login created. ${barber.name} logs in as "${login}" with that password.`,
+        t(current ? 'loginEditor.newReady' : 'loginEditor.created', { name: barber.name, username: login }),
       );
       setPassword('');
       setOpen(false);
     } catch (err) {
       setError(
         err instanceof UsernameTakenError
-          ? `The username "${login}" is taken. Pick another.`
-          : "Couldn't save the login. Check your connection and try again.",
+          ? t('addBarber.usernameTaken', { username: login })
+          : t('loginEditor.failed'),
       );
       if (!(err instanceof UsernameTakenError)) console.error(err);
     }
@@ -68,9 +68,10 @@ export function LoginEditor({ barber, logins }: Props) {
     <form onSubmit={handleSubmit} noValidate className="mt-3">
       {!current && (
         <label className="mb-3 block">
-          <span className="mb-1 block text-sm font-medium">Username</span>
+          <span className="mb-1 block text-sm font-medium">{t('loginEditor.username')}</span>
           <input
             type="text"
+            dir="ltr"
             autoComplete="off"
             autoCapitalize="none"
             autoCorrect="off"
@@ -85,11 +86,12 @@ export function LoginEditor({ barber, logins }: Props) {
       )}
       <label className="mb-3 block">
         <span className="mb-1 block text-sm font-medium">
-          {current ? 'New password' : 'Password'}{' '}
-          <span className="font-normal text-muted">(at least {MIN_PASSWORD_LENGTH} characters)</span>
+          {current ? t('loginEditor.newPassword') : t('loginEditor.password')}{' '}
+          <span className="font-normal text-muted">{t('addBarber.passwordHint', { min: MIN_PASSWORD_LENGTH })}</span>
         </span>
         <input
           type="text"
+          dir="ltr"
           autoComplete="off"
           spellCheck={false}
           value={password}
@@ -97,7 +99,7 @@ export function LoginEditor({ barber, logins }: Props) {
           disabled={busy}
           className={`${inputBase} w-full`}
         />
-        <span className="mt-1 block text-sm text-muted">Give it to him; he can change it in his settings.</span>
+        <span className="mt-1 block text-sm text-muted">{t('loginEditor.giveIt')}</span>
       </label>
       {error && (
         <Notice tone="error" className="mb-3">
@@ -107,18 +109,18 @@ export function LoginEditor({ barber, logins }: Props) {
       <div className={current ? 'grid grid-cols-2 gap-2' : ''}>
         {current && (
           <button type="button" onClick={() => setOpen(false)} disabled={busy} className={buttonOutline}>
-            Back
+            {t('common.back')}
           </button>
         )}
         <button type="submit" disabled={busy} className={`${buttonDark} w-full`}>
-          {busy ? 'Saving…' : current ? 'Make new login' : 'Create login'}
+          {busy ? t('common.saving') : current ? t('loginEditor.makeNew') : t('loginEditor.create')}
         </button>
       </div>
     </form>
   );
 
   return (
-    <Section title="Login">
+    <Section title={t('barbers.loginSection')}>
       <div className={cardClass}>
         {done && (
           <Notice tone="success" className="mb-3">
@@ -126,22 +128,20 @@ export function LoginEditor({ barber, logins }: Props) {
           </Notice>
         )}
         {logins === null ? (
-          <p className="text-sm text-muted-strong">Loading…</p>
+          <p className="text-sm text-muted-strong">{t('common.loading')}</p>
         ) : current ? (
           <>
             <p className="text-sm">
-              Username <strong>{current.username}</strong> ·{' '}
-              {current.active ? 'on' : 'off'}
+              {t('loginEditor.usernameIs')} <strong dir="ltr">{current.username}</strong> ·{' '}
+              {current.active ? t('loginEditor.on') : t('loginEditor.off')}
             </p>
             {!barber.active ? (
-              <p className="mt-2 text-sm text-muted-strong">Bring {barber.name} back first to give him a new login.</p>
+              <p className="mt-2 text-sm text-muted-strong">{t('loginEditor.bringBackFirst', { name: barber.name })}</p>
             ) : open ? (
               form
             ) : (
               <>
-                <p className="mt-2 text-sm text-muted-strong">
-                  Forgot his password? Make a new login: same username, a new password.
-                </p>
+                <p className="mt-2 text-sm text-muted-strong">{t('loginEditor.forgot')}</p>
                 <button
                   type="button"
                   onClick={() => {
@@ -150,14 +150,14 @@ export function LoginEditor({ barber, logins }: Props) {
                   }}
                   className={`${buttonOutline} mt-3 w-full`}
                 >
-                  New login
+                  {t('loginEditor.newLogin')}
                 </button>
               </>
             )}
           </>
         ) : (
           <>
-            <p className="text-sm">{barber.name} has no login yet.</p>
+            <p className="text-sm">{t('loginEditor.noLoginYet', { name: barber.name })}</p>
             {form}
           </>
         )}

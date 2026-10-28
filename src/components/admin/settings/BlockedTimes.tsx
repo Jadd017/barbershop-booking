@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from '../../../i18n';
 import { subscribeBookingsOn } from '../../../data/bookings';
 import { blockTime, subscribeBlockedTimes, unblockTime } from '../../../data/days';
 import { store } from '../../../data/firebase';
@@ -26,6 +28,7 @@ interface Props {
  * Times already booked stay with their bookings: they're listed so he can cancel them first.
  */
 export function BlockedTimes({ today, shop, barber, self }: Props) {
+  const { t } = useTranslation();
   const barberId = barber.id;
   const [date, setDate] = useState(today);
   const [start, setStart] = useState('16:00');
@@ -53,7 +56,7 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
     () =>
       subscribeBlockedTimes(store, barberId, today, setBlocked, (err) => {
         console.error(err);
-        setMessage({ error: true, text: "Couldn't load blocked times. Check your connection." });
+        setMessage({ error: true, text: i18n.t('blocked.loadError') });
       }),
     [barberId, today],
   );
@@ -87,12 +90,12 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
         error: false,
         text:
           count === 0
-            ? 'Nothing to block: those times are already booked or blocked.'
-            : `Blocked ${start}–${end} on ${formatDayLong(date)}.`,
+            ? t('blocked.nothing')
+            : t('blocked.done', { start, end, day: formatDayLong(date) }),
       });
     } catch (err) {
       console.error(err);
-      setMessage({ error: true, text: "Couldn't block. Check your connection and try again." });
+      setMessage({ error: true, text: t('blocked.failed') });
     }
     setBusy(false);
   }
@@ -103,14 +106,14 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
       await unblockTime(store, barberId, range.date, range.start, range.end);
     } catch (err) {
       console.error(err);
-      setMessage({ error: true, text: "Couldn't unblock. Check your connection and try again." });
+      setMessage({ error: true, text: t('blocked.unblockFailed') });
     }
   }
 
   return (
     <Section
-      title="Blocked times"
-      description={`Block part of a day so customers can't book ${self ? 'you' : barber.name} then. Saved straight away.`}
+      title={t('blocked.title')}
+      description={self ? t('blocked.descriptionYou') : t('blocked.descriptionThem', { name: barber.name })}
     >
       {blocked && blocked.length > 0 && (
         <ul className="mb-3 grid gap-2">
@@ -130,7 +133,7 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
                 onClick={() => unblock(range)}
                 className={removeButtonClass}
               >
-                Unblock
+                {t('blocked.unblock')}
               </button>
             </li>
           ))}
@@ -139,7 +142,7 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
 
       <div className={cardClass}>
         <label className="block">
-          <span className="mb-1 block text-sm font-medium">Day</span>
+          <span className="mb-1 block text-sm font-medium">{t('common.day')}</span>
           <input
             type="date"
             min={today}
@@ -150,24 +153,28 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
         </label>
         <p className="mt-1 text-sm text-muted">
           {!shopHours
-            ? 'The shop is closed that day.'
-            : `Shop open ${shopHours.start}–${shopHours.end}. ${
+            ? t('blocked.shopClosed')
+            : `${t('blocked.shopOpen', { start: shopHours.start, end: shopHours.end })} ${
                 myHours
-                  ? `${self ? 'You work' : `${barber.name} works`} ${myHours.start}–${myHours.end}.`
-                  : `${self ? "You're" : `${barber.name} is`} not working that day.`
+                  ? self
+                    ? t('blocked.youWork', { start: myHours.start, end: myHours.end })
+                    : t('blocked.theyWork', { name: barber.name, start: myHours.start, end: myHours.end })
+                  : self
+                    ? t('blocked.youOff')
+                    : t('blocked.theyOff', { name: barber.name })
               }`}
         </p>
         <div className="mt-3 flex items-center gap-2">
           <TimeSelect
-            label="Block from"
+            label={t('blocked.from')}
             value={start}
             onChange={setStart}
             min={shopHours?.start}
             max={shopHours?.end}
           />
-          <span className="text-muted">to</span>
+          <span className="text-muted">{t('common.toTime')}</span>
           <TimeSelect
-            label="Block until"
+            label={t('blocked.until')}
             value={end}
             onChange={setEnd}
             min={shopHours?.start}
@@ -179,10 +186,7 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
         {clashes.length > 0 && (
           <div className="mt-4 rounded-xl border border-brass/50 bg-brass/10 p-3">
             <p className="mb-3 text-sm font-medium text-ink">
-              {clashes.length === 1 ? 'This booking is' : `These ${clashes.length} bookings are`}{' '}
-              in that time. Blocking won't cancel {clashes.length === 1 ? 'it' : 'them'}: cancel
-              here if needed and let the customer know. If you block first, a booking's time opens
-              up again when it's cancelled.
+              {clashes.length === 1 ? t('blocked.clashOne') : t('blocked.clashMany', { count: clashes.length })}
             </p>
             <ul className="grid gap-3">
               {clashes.map((b) => (
@@ -205,10 +209,10 @@ export function BlockedTimes({ today, shop, barber, self }: Props) {
           className={`${smallButtonClass} mt-3 w-full`}
         >
           {busy
-            ? 'Blocking…'
+            ? t('blocked.blocking')
             : clashes.length > 0
-              ? `Block the free times ${start}–${end} anyway`
-              : `Block ${start}–${end}`}
+              ? t('blocked.blockAnyway', { start, end })
+              : t('blocked.block', { start, end })}
         </button>
       </div>
     </Section>

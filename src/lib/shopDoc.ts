@@ -43,10 +43,10 @@ export interface BrandingDoc {
   colors: BrandColors;
 }
 
-/** price is left out when the service has none. */
+/** price and nameAr are left out when the service has none. */
 export type ServicesDoc = Record<
   string,
-  { name: string; durationMinutes: number; order: number; price?: number }
+  { name: string; nameAr?: string; durationMinutes: number; order: number; price?: number }
 >;
 
 /** startDay and endDay are day numbers (see dayNumber), both included. */
@@ -103,6 +103,7 @@ export function servicesToDoc(services: Service[]): ServicesDoc {
       s.id,
       {
         name: s.name.trim(),
+        ...(s.nameAr?.trim() ? { nameAr: s.nameAr.trim() } : {}),
         durationMinutes: s.durationMinutes,
         order,
         ...(s.price === undefined ? {} : { price: s.price }),
@@ -117,6 +118,7 @@ export function servicesFromDoc(doc: ServicesDoc | undefined): Service[] {
     .map(([id, s]) => ({
       id,
       name: s.name,
+      ...(typeof s.nameAr === 'string' && s.nameAr ? { nameAr: s.nameAr } : {}),
       durationMinutes: s.durationMinutes,
       ...(typeof s.price === 'number' ? { price: s.price } : {}),
     }));

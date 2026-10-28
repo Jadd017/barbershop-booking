@@ -12,10 +12,11 @@ import {
   MIN_BARBER_NAME_LENGTH,
   MIN_SHOP_NAME_LENGTH,
 } from '../config';
+import i18n from '../i18n';
 import type { Barber, DateKey, DayHours, OpeningHours, ShopSettings, TimeString } from '../types';
 import { normalizeLebanesePhone } from './phone';
 import {
-  WEEKDAY_NAMES,
+  weekdayName,
   bookingWindowOn,
   fitsDayHours,
   servicesErrors,
@@ -107,14 +108,14 @@ export function hoursOutsideShop(weeklyHours: DayHours[], openingHours: OpeningH
   weeklyHours.forEach((hours, i) => {
     const shopHours = openingHours[i];
     if (hours.closed || !shopHours) return;
-    const day = WEEKDAY_NAMES[i];
+    const day = weekdayName(i);
     if (shopHours.closed) {
-      errors.push(`${day}: the shop is closed.`);
+      errors.push(i18n.t('schedule.shopClosedOnDay', { day }));
     } else if (
       timeToMinutes(hours.start) < timeToMinutes(shopHours.start) ||
       timeToMinutes(hours.end) > timeToMinutes(shopHours.end)
     ) {
-      errors.push(`${day}: must be within the shop's hours (${shopHours.start}–${shopHours.end}).`);
+      errors.push(i18n.t('schedule.withinShopHours', { day, start: shopHours.start, end: shopHours.end }));
     }
   });
   return errors;
@@ -149,7 +150,7 @@ export function barberErrors(barber: Barber, shop: ShopSettings): string[] {
   const errors: string[] = [];
   if (!lengthBetween(barber.name, MIN_BARBER_NAME_LENGTH, MAX_BARBER_NAME_LENGTH)) {
     errors.push(
-      `The name must be ${MIN_BARBER_NAME_LENGTH} to ${MAX_BARBER_NAME_LENGTH} characters.`,
+      i18n.t('schedule.barberNameLength', { min: MIN_BARBER_NAME_LENGTH, max: MAX_BARBER_NAME_LENGTH }),
     );
   }
   return [
@@ -164,13 +165,13 @@ export function shopErrors(shop: ShopSettings): string[] {
   const errors: string[] = [];
   if (!lengthBetween(shop.shopName, MIN_SHOP_NAME_LENGTH, MAX_SHOP_NAME_LENGTH)) {
     errors.push(
-      `The shop name must be ${MIN_SHOP_NAME_LENGTH} to ${MAX_SHOP_NAME_LENGTH} characters.`,
+      i18n.t('schedule.shopNameLength', { min: MIN_SHOP_NAME_LENGTH, max: MAX_SHOP_NAME_LENGTH }),
     );
   }
   if (!shop.whatsapp) {
-    errors.push("Add the shop's WhatsApp number: customers send their bookings to it.");
+    errors.push(i18n.t('schedule.addWhatsapp'));
   } else if (normalizeLebanesePhone(shop.whatsapp) !== shop.whatsapp) {
-    errors.push('The WhatsApp number must be a Lebanese mobile number.');
+    errors.push(i18n.t('schedule.whatsappLebanese'));
   }
   return [
     ...errors,

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { MAX_PRICE, MAX_SERVICE_MINUTES, SLOT_MINUTES } from '../../../config';
 import type { Service } from '../../../types';
 import { buttonDangerOutline, inputBase } from '../../ui';
@@ -19,6 +20,7 @@ function newServiceId(): string {
 }
 
 export function ServicesEditor({ services, onChange }: Props) {
+  const { t } = useTranslation();
   function setService(index: number, service: Service) {
     onChange(services.map((s, i) => (i === index ? service : s)));
   }
@@ -31,25 +33,44 @@ export function ServicesEditor({ services, onChange }: Props) {
 
   return (
     <Section
-      title="Services"
-      description="Prices are optional and only shown to customers. Removing or changing a service doesn't affect bookings already made."
+      title={t('services.title')}
+      description={t('services.description')}
     >
       <ul className="grid gap-3">
         {services.map((service, i) => (
           <li key={service.id} className={cardClass}>
             <label className="block">
-              <span className="mb-1 block text-sm font-medium">Name</span>
+              <span className="mb-1 block text-sm font-medium">{t('services.nameEn')}</span>
               <input
                 type="text"
+                lang="en"
+                dir="ltr"
                 value={service.name}
                 maxLength={40}
                 onChange={(e) => setService(i, { ...service, name: e.target.value })}
                 className={`${inputBase} w-full`}
               />
             </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-sm font-medium">
+                {t('services.nameAr')} <span className="font-normal text-muted">{t('common.optional')}</span>
+              </span>
+              <input
+                type="text"
+                lang="ar"
+                dir="rtl"
+                value={service.nameAr ?? ''}
+                maxLength={40}
+                onChange={(e) => {
+                  const { nameAr: _old, ...rest } = service;
+                  setService(i, e.target.value ? { ...rest, nameAr: e.target.value } : rest);
+                }}
+                className={`${inputBase} w-full`}
+              />
+            </label>
             <div className="mt-3 flex items-end gap-2">
               <label className="min-w-0 flex-1">
-                <span className="mb-1 block text-sm font-medium">Length</span>
+                <span className="mb-1 block text-sm font-medium">{t('services.length')}</span>
                 <select
                   value={service.durationMinutes}
                   onChange={(e) =>
@@ -59,14 +80,14 @@ export function ServicesEditor({ services, onChange }: Props) {
                 >
                   {DURATIONS.map((d) => (
                     <option key={d} value={d}>
-                      {d} min
+                      {t('common.minutes', { minutes: d })}
                     </option>
                   ))}
                 </select>
               </label>
               <label className="w-28 shrink-0">
                 <span className="mb-1 block text-sm font-medium">
-                  Price <span className="font-normal text-muted">($)</span>
+                  {t('services.price')} <span className="font-normal text-muted">($)</span>
                 </span>
                 <input
                   type="number"
@@ -74,7 +95,7 @@ export function ServicesEditor({ services, onChange }: Props) {
                   min={0}
                   max={MAX_PRICE}
                   step={0.5}
-                  placeholder="None"
+                  placeholder={t('services.none')}
                   value={service.price === undefined || Number.isNaN(service.price) ? '' : service.price}
                   onChange={(e) => setPrice(i, e.target.value)}
                   className={`${inputBase} w-full tabular-nums`}
@@ -86,7 +107,7 @@ export function ServicesEditor({ services, onChange }: Props) {
               onClick={() => onChange(services.filter((_, j) => j !== i))}
               className={`${buttonDangerOutline} mt-3 w-full text-sm`}
             >
-              Remove {service.name.trim() || 'service'}
+              {t('services.remove', { name: service.name.trim() || t('services.service') })}
             </button>
           </li>
         ))}
@@ -98,7 +119,7 @@ export function ServicesEditor({ services, onChange }: Props) {
         }
         className={`${smallButtonClass} mt-3 w-full`}
       >
-        + Add service
+        {t('services.add')}
       </button>
     </Section>
   );

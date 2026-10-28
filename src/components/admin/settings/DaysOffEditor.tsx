@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { addDays, formatDayLong } from '../../../lib/time';
 import type { DateKey } from '../../../types';
 import { inputBase } from '../../ui';
@@ -32,21 +33,22 @@ export function DaysOffEditor({
   today,
   daysOff,
   onChange,
-  title = 'Days off',
-  description = 'The shop is closed on these days (vacation, holidays).',
+  title,
+  description,
   closedAnyway = [],
 }: Props) {
+  const { t } = useTranslation();
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   function add() {
     const end = to || from;
-    if (!from || end < from) return setError('The last day must be on or after the first.');
+    if (!from || end < from) return setError(t('daysOff.lastAfterFirst'));
     const dates: DateKey[] = [];
     for (let d = from; d <= end && dates.length < MAX_RANGE_DAYS; d = addDays(d, 1)) dates.push(d);
     if (dates[dates.length - 1] !== end) {
-      return setError(`Add at most ${MAX_RANGE_DAYS} days at a time.`);
+      return setError(t('daysOff.maxRange', { max: MAX_RANGE_DAYS }));
     }
     setError(null);
     onChange([...new Set([...daysOff, ...dates])].sort());
@@ -57,7 +59,7 @@ export function DaysOffEditor({
   const closed = toRanges(closedAnyway.filter((d) => d >= today));
 
   return (
-    <Section title={title} description={description}>
+    <Section title={title ?? t('daysOff.title')} description={description ?? t('daysOff.shopDescription')}>
       {upcoming.length > 0 && (
         <ul className="mb-3 grid gap-2">
           {upcoming.map(({ from: a, to: b }) => (
@@ -74,7 +76,7 @@ export function DaysOffEditor({
                 onClick={() => onChange(daysOff.filter((d) => d < a || d > b))}
                 className={removeButtonClass}
               >
-                Remove
+                {t('common.remove')}
               </button>
             </li>
           ))}
@@ -84,7 +86,7 @@ export function DaysOffEditor({
       <div className={cardClass}>
         <div className="grid grid-cols-2 gap-2">
           <label>
-            <span className="mb-1 block text-sm font-medium">From</span>
+            <span className="mb-1 block text-sm font-medium">{t('common.from')}</span>
             <input
               type="date"
               min={today}
@@ -95,7 +97,7 @@ export function DaysOffEditor({
           </label>
           <label>
             <span className="mb-1 block text-sm font-medium">
-              To <span className="font-normal text-muted">(optional)</span>
+              {t('common.to')} <span className="font-normal text-muted">{t('common.optional')}</span>
             </span>
             <input
               type="date"
@@ -108,14 +110,14 @@ export function DaysOffEditor({
         </div>
         {error && <p className="mt-2 text-sm text-pole-red">{error}</p>}
         <button type="button" onClick={add} className={`${smallButtonClass} mt-3 w-full`}>
-          + Add {to && to !== from ? 'days off' : 'day off'}
+          {to && to !== from ? t('daysOff.addMany') : t('daysOff.addOne')}
         </button>
       </div>
 
       {closed.length > 0 && (
         <div className="mt-3 text-sm text-muted-strong">
-          <p className="font-medium">The shop is closed on:</p>
-          <ul className="list-disc pl-5">
+          <p className="font-medium">{t('daysOff.shopClosedOn')}</p>
+          <ul className="list-disc ps-5">
             {closed.map(({ from: a, to: b }) => (
               <li key={a}>
                 {formatDayLong(a)}

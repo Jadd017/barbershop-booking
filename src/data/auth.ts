@@ -12,6 +12,7 @@ import {
   signOut,
   type User,
 } from 'firebase/auth';
+import i18n from '../i18n';
 import { clearLastBooking } from '../lib/lastBooking';
 import { clearPendingBooking } from '../lib/pendingBooking';
 import { auth } from './firebase';
@@ -70,15 +71,13 @@ export function signInErrorMessage(err: unknown): string | null {
     case 'auth/user-cancelled':
       return null;
     case 'auth/network-request-failed':
-      return 'No connection. Check your internet and try again.';
+      return i18n.t('common.noConnection');
     case 'auth/unauthorized-domain':
       console.error(err);
-      return 'Google sign-in is not set up for this website yet. Please tell the shop.';
+      return i18n.t('signIn.notSetUp');
     default:
       console.error(err);
-      return isInAppBrowser()
-        ? "Google sign-in doesn't work inside this app. Open this page in Chrome or Safari."
-        : "Couldn't sign in with Google. Please try again.";
+      return isInAppBrowser() ? i18n.t('signIn.inAppFailed') : i18n.t('signIn.failed');
   }
 }
 

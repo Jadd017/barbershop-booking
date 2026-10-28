@@ -1,9 +1,11 @@
 import { ArrowRight, Check, MessageCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { moveBooking } from '../../data/bookings';
 import { subscribeDaysOn } from '../../data/days';
 import { AlreadyCancelledError, NotBookableError, NotCancellableError, SlotTakenError } from '../../data/errors';
 import { store } from '../../data/firebase';
+import { useBookingServiceName } from '../../hooks/useServiceNames';
 import { initials } from '../../lib/initials';
 import { moveOptions } from '../../lib/team';
 import { formatDayLong, minutesToTime, timeToMinutes } from '../../lib/time';
@@ -25,6 +27,8 @@ interface Props {
  * never double-book. Afterwards: a WhatsApp button to tell the customer.
  */
 export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
+  const { t } = useTranslation();
+  const serviceName = useBookingServiceName();
   const [days, setDays] = useState<Map<string, BarberDay> | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [chosen, setChosen] = useState<Barber | null>(null);
@@ -55,12 +59,12 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
     } catch (err) {
       setError(
         err instanceof SlotTakenError
-          ? `${pick.name} was just booked at that time. Pick someone else.`
+          ? t('move.justBooked', { name: pick.name })
           : err instanceof NotBookableError
-            ? `${pick.name} is no longer active. Pick someone else.`
+            ? t('move.inactive', { name: pick.name })
             : err instanceof AlreadyCancelledError || err instanceof NotCancellableError
-              ? 'This booking was cancelled or finished meanwhile, so it stays as it is.'
-              : "Couldn't move it. Check your connection and try again.",
+              ? t('move.changed')
+              : t('move.failed'),
       );
       if (!(err instanceof SlotTakenError || err instanceof NotBookableError)) console.error(err);
       setChosen(null);
@@ -78,7 +82,7 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
       <header className="sticky top-0 z-10 bg-charcoal text-cream">
         <div className="mx-auto flex max-w-xl items-center justify-between px-4 py-3">
           <h2 id="move-title" className="caps text-2xl font-semibold tracking-[0.1em]">
-            Move booking
+            {t('move.title')}
           </h2>
           <button
             type="button"
@@ -87,7 +91,7 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
             className="inline-flex min-h-11 items-center gap-1.5 px-1 text-sm font-semibold text-line hover:text-cream"
           >
             <X aria-hidden size={18} />
-            {moved ? 'Done' : 'Close'}
+            {moved ? t('common.done') : t('common.close')}
           </button>
         </div>
       </header>
@@ -101,7 +105,7 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
           </p>
           <p className="text-lg font-semibold">{booking.name}</p>
           <p className="text-sm text-muted">
-            {booking.serviceName} · {booking.durationMinutes} min · now with{' '}
+            {serviceName(booking)} · {t('common.minutes', { minutes: booking.durationMinutes })} · {t('move.nowWith')}{' '}
             <span className="font-semibold text-ink">{(moved ?? booking).barberName}</span>
           </p>
         </div>
@@ -111,7 +115,7 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
             <Notice tone="success">
               <span className="flex items-center gap-2 font-semibold">
                 <Check aria-hidden size={18} />
-                Moved to {moved.barberName}.
+                {t('move.movedTo', { name: moved.barberName })}
               </span>
             </Notice>
             {moved.phone ? (
@@ -122,29 +126,27 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
                 className={`${buttonBrass} caps min-h-14 text-base`}
               >
                 <MessageCircle aria-hidden size={20} />
-                WhatsApp {moved.name}
+                {t('move.whatsappName', { name: moved.name })}
               </a>
             ) : (
-              <p className="text-sm text-muted-strong">
-                No phone number on this booking: let the customer know another way.
-              </p>
+              <p className="text-sm text-muted-strong">{t('move.noPhone')}</p>
             )}
             <button type="button" onClick={onClose} className={buttonOutline}>
-              Done
+              {t('common.done')}
             </button>
           </div>
         ) : (
           <>
-            <h3 className="caps mb-1 text-sm font-semibold">Move to</h3>
+            <h3 className="caps mb-1 text-sm font-semibold">{t('move.moveTo')}</h3>
             <p className="mb-3 text-sm text-muted-strong">
-              Only barbers free for the whole {booking.durationMinutes} min can take it.
+              {t('move.onlyFree', { minutes: booking.durationMinutes })}
             </p>
             {loadError ? (
-              <Notice tone="error">Couldn't load the barbers' days. Check your connection.</Notice>
+              <Notice tone="error">{t('move.daysError')}</Notice>
             ) : !options ? (
-              <p className="text-sm text-muted-strong">Loading…</p>
+              <p className="text-sm text-muted-strong">{t('common.loading')}</p>
             ) : options.length === 0 ? (
-              <Notice tone="warning">There's no other active barber.</Notice>
+              <Notice tone="warning">{t('move.noOther')}</Notice>
             ) : (
               <ul className="grid gap-2">
                 {options.map(({ barber, reason }) => {
@@ -156,7 +158,7 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
                         disabled={reason !== null || busy}
                         aria-pressed={current}
                         onClick={() => setChosen(barber)}
-                        className={`flex min-h-16 w-full items-center gap-3 rounded-2xl border px-3 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        className={`flex min-h-16 w-full items-center gap-3 rounded-2xl border px-3 py-2 text-start transition disabled:cursor-not-allowed disabled:opacity-50 ${
                           current ? 'border-charcoal bg-charcoal text-cream' : 'border-line bg-card text-ink hover:border-muted'
                         }`}
                       >
@@ -171,7 +173,7 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
                         <span className="min-w-0 flex-1">
                           <span className="block font-semibold">{barber.name}</span>
                           <span className={`block text-sm ${current ? 'text-line' : 'text-muted-strong'}`}>
-                            {reason ?? 'Free'}
+                            {reason ?? t('move.free')}
                           </span>
                         </span>
                       </button>
@@ -199,14 +201,14 @@ export function MoveSheet({ shop, barbers, booking, onClose }: Props) {
               className={`${buttonBrass} caps min-h-14 w-full text-base`}
             >
               {busy ? (
-                'Moving…'
+                t('move.moving')
               ) : pick ? (
                 <>
-                  Move to {pick.name}
-                  <ArrowRight aria-hidden size={20} />
+                  {t('move.moveToName', { name: pick.name })}
+                  <ArrowRight aria-hidden size={20} className="rtl:-scale-x-100" />
                 </>
               ) : (
-                'Pick a barber'
+                t('move.pickBarber')
               )}
             </button>
           </div>

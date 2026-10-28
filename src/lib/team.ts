@@ -3,6 +3,7 @@
  * can move to, a new barber's ID, and the display order.
  */
 import { SLOT_MINUTES } from '../config';
+import i18n from '../i18n';
 import type { Barber, BarberDay, DateKey, ShopSettings, ShopStaffBooking } from '../types';
 import { emptyDay, sortBarbers } from './barberDoc';
 import { fitsBarberHours } from './barberSchedule';
@@ -65,11 +66,11 @@ export function moveOptions(
   return sortBarbers(barbers.filter((b) => b.active && b.id !== booking.barberId)).map((barber) => {
     const day = days.get(barber.id) ?? emptyDay(barber.id, booking.date);
     const reason = !fitsBarberHours(shop, barber, booking.date, booking.startTime, booking.durationMinutes)
-      ? 'Not working then'
+      ? i18n.t('schedule.notWorkingThen')
       : slots.some((t) => day.booked.has(t))
-        ? 'Booked then'
+        ? i18n.t('schedule.bookedThen')
         : slots.some((t) => day.blocked.has(t))
-          ? 'Blocked then'
+          ? i18n.t('schedule.blockedThen')
           : null;
     return { barber, reason };
   });
