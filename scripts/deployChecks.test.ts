@@ -7,10 +7,13 @@ import {
   codeProblems,
   envLeakProblems,
   foreignValues,
+  IDENTIFYING_KEYS,
   MULTI_BARBER_FILES,
   readBuild,
   uncommittedProblems,
 } from './deployChecks.mjs';
+import { LOCKED_PROJECTS } from './deployTargets.mjs';
+import { readShop } from './shops.mjs';
 
 const temp = mkdtempSync(join(tmpdir(), 'deploy-checks-'));
 afterAll(() => rmSync(temp, { recursive: true, force: true }));
@@ -25,18 +28,21 @@ function folder(name: string, files: Record<string, string>): string {
   return root;
 }
 
+// Made-up configs, never real ones (a real-looking API key would be flagged by secret scanners).
+// The shop's own config.
 const SASSINE = {
-  VITE_FIREBASE_API_KEY: 'AIzaSassineKey000000000000000000000000',
-  VITE_FIREBASE_AUTH_DOMAIN: 'sassine-barbershop.web.app',
-  VITE_FIREBASE_PROJECT_ID: 'sassine-barbershop',
-  VITE_FIREBASE_APP_ID: '1:111:web:sassine',
+  VITE_FIREBASE_API_KEY: 'fake-api-key-shop',
+  VITE_FIREBASE_AUTH_DOMAIN: 'example-shop.web.app',
+  VITE_FIREBASE_PROJECT_ID: 'example-shop',
+  VITE_FIREBASE_APP_ID: 'fake-app-id-shop',
 };
-// What Eddy's .env.local holds (made-up values in the same shape).
+// Stands for Eddy's .env.local. The key starts with "AIza", as real ones do, so it's masked in
+// messages; it's far too short to be one.
 const EDDY_LOCAL = {
-  VITE_FIREBASE_API_KEY: 'AIzaEddyKey0000000000000000000000000000',
-  VITE_FIREBASE_AUTH_DOMAIN: 'eddy-barbershop.firebaseapp.com',
-  VITE_FIREBASE_PROJECT_ID: 'eddy-barbershop',
-  VITE_FIREBASE_APP_ID: '1:222:web:eddy',
+  VITE_FIREBASE_API_KEY: 'AIza-not-a-real-key-eddy',
+  VITE_FIREBASE_AUTH_DOMAIN: 'example-eddy.firebaseapp.com',
+  VITE_FIREBASE_PROJECT_ID: 'example-eddy-project',
+  VITE_FIREBASE_APP_ID: 'fake-app-id-eddy',
 };
 const envText = (env: Record<string, string>) => Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
 
@@ -85,7 +91,7 @@ describe('envLeakProblems', () => {
 
   it('refuses VITE_ variables in the environment (Vite builds them in, over the .env files)', () => {
     const problems = envLeakProblems({
-      processEnv: { VITE_FIREBASE_PROJECT_ID: 'eddy-barbershop' },
+      processEnv: { VITE_FIREBASE_PROJECT_ID: EDDY_LOCAL.VITE_FIREBASE_PROJECT_ID },
       shopDir: 'shops/sassine',
       shopDirFiles: ['.env'],
     });
@@ -107,7 +113,7 @@ describe('envLeakProblems', () => {
 describe('foreignValues', () => {
   const root = folder('repo', {
     'shops/sassine/.env': envText(SASSINE),
-    'shops/other/.env': envText({ ...SASSINE, VITE_FIREBASE_PROJECT_ID: 'other-shop', VITE_FIREBASE_API_KEY: 'AIzaOther' }),
+    'shops/other/.env': envText({ ...SASSINE, VITE_FIREBASE_PROJECT_ID: 'other-shop', VITE_FIREBASE_API_KEY: 'fake-api-key-other' }),
     'shops/_template/.env': 'VITE_FIREBASE_PROJECT_ID=<project-id>',
     '.env.local': envText(EDDY_LOCAL),
     '.env.emulator': 'VITE_FIREBASE_PROJECT_ID=demo-barbershop\nVITE_FIREBASE_API_KEY=demo-api-key',
@@ -118,7 +124,7 @@ describe('foreignValues', () => {
     expect(foreign).toEqual(
       expect.arrayContaining([
         'other-shop',
-        'AIzaOther',
+        'fake-api-key-other',
         ...Object.values(EDDY_LOCAL),
         'demo-barbershop',
         'demo-api-key',
@@ -135,28 +141,31 @@ describe('foreignValues', () => {
   });
 
   it("always includes Eddy's locked project and the emulator's", () => {
+    // This repository's real config: the values are read from it, not written out here.
     const foreign = foreignValues('.', 'sassine');
-    expect(foreign).toContain('eddy-barbershop');
+    for (const locked of LOCKED_PROJECTS) expect(foreign).toContain(locked);
     expect(foreign).toContain('demo-barbershop');
-    expect(foreign).not.toContain('sassine-barbershop');
+    const own = readShop('sassine').env!;
+    for (const key of IDENTIFYING_KEYS) expect(foreign).not.toContain(own[key]);
   });
 });
 
 describe('bundleProblems', () => {
-  const foreign = ['eddy-barbershop', EDDY_LOCAL.VITE_FIREBASE_API_KEY, 'demo-barbershop'];
-  const sassineBundle = `const c={apiKey:\`${SASSINE.VITE_FIREBASE_API_KEY}\`,projectId:\`sassine-barbershop\`,appId:\`${SASSINE.VITE_FIREBASE_APP_ID}\`}`;
+  const EDDY_PROJECT = EDDY_LOCAL.VITE_FIREBASE_PROJECT_ID;
+  const foreign = [EDDY_PROJECT, EDDY_LOCAL.VITE_FIREBASE_API_KEY, 'demo-barbershop'];
+  const sassineBundle = `const c={apiKey:\`${SASSINE.VITE_FIREBASE_API_KEY}\`,projectId:\`${SASSINE.VITE_FIREBASE_PROJECT_ID}\`,appId:\`${SASSINE.VITE_FIREBASE_APP_ID}\`}`;
 
   it("passes the shop's own build", () => {
     expect(bundleProblems(sassineBundle, SASSINE, foreign)).toEqual([]);
   });
 
   it("refuses Eddy's build for Sassine (what went live on 2026-10-28)", () => {
-    const eddyBundle = `<title>Eddy's Barbershop</title>const c={apiKey:\`${EDDY_LOCAL.VITE_FIREBASE_API_KEY}\`,projectId:\`eddy-barbershop\`}`;
+    const eddyBundle = `<title>Eddy's Barbershop</title>const c={apiKey:\`${EDDY_LOCAL.VITE_FIREBASE_API_KEY}\`,projectId:\`${EDDY_PROJECT}\`}`;
     const problems = bundleProblems(eddyBundle, SASSINE, foreign);
     expect(problems.filter((p) => /doesn't contain the shop's/.test(p))).toHaveLength(3);
-    expect(problems).toContain('the build contains "eddy-barbershop", which belongs to another config.');
+    expect(problems).toContain(`the build contains "${EDDY_PROJECT}", which belongs to another config.`);
     // API keys are only shown by their start.
-    expect(problems.join('\n')).toContain('"AIzaEddy…"');
+    expect(problems.join('\n')).toContain('"AIza-not…"');
     expect(problems.join('\n')).not.toContain(EDDY_LOCAL.VITE_FIREBASE_API_KEY);
   });
 

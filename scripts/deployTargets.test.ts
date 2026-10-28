@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { deployRefusal, shopAliases } from './deployTargets.mjs';
+import { deployRefusal, LOCKED_PROJECTS, shopAliases } from './deployTargets.mjs';
+import { readShop } from './shops.mjs';
 
-const ALIASES = { sassine: 'sassine-maatouk', eddy: 'eddy-barbershop', default: 'eddy-barbershop' };
+// Eddy's live project, as locked in deployTargets.mjs.
+const LOCKED = LOCKED_PROJECTS[0];
+const ALIASES = { sassine: 'example-shop-project', eddy: LOCKED, default: LOCKED };
 
 describe('deployRefusal', () => {
   it('needs a named shop', () => {
     expect(deployRefusal(undefined, undefined, ALIASES)).toMatch(/name the shop/);
-    expect(deployRefusal('', 'sassine-maatouk', ALIASES)).toMatch(/name the shop/);
+    expect(deployRefusal('', 'example-shop-project', ALIASES)).toMatch(/name the shop/);
   });
 
   it('never deploys to Eddy\'s live project, however it is named', () => {
+    expect(LOCKED).toMatch(/^eddy-/);
     expect(deployRefusal('eddy', undefined, ALIASES)).toMatch(/locked/);
-    expect(deployRefusal('eddy-barbershop', undefined, ALIASES)).toMatch(/locked/);
-    expect(deployRefusal('sassine', 'eddy-barbershop', ALIASES)).toMatch(/locked/);
+    expect(deployRefusal(LOCKED, undefined, ALIASES)).toMatch(/locked/);
+    expect(deployRefusal('sassine', LOCKED, ALIASES)).toMatch(/locked/);
     expect(deployRefusal('default', undefined, ALIASES)).toMatch(/not a shop/);
   });
 
@@ -23,18 +27,20 @@ describe('deployRefusal', () => {
 
   it("allows a named shop to its own project", () => {
     expect(deployRefusal('sassine', undefined, ALIASES)).toBeNull();
-    expect(deployRefusal('sassine', 'sassine-maatouk', ALIASES)).toBeNull();
+    expect(deployRefusal('sassine', 'example-shop-project', ALIASES)).toBeNull();
   });
 
-  it("this branch's .firebaserc has only sassine, which deploys to its own project and nowhere else", () => {
+  it(".firebaserc has only sassine, which deploys to its own project and nowhere else", () => {
     const aliases = shopAliases();
-    expect(aliases).toEqual({ sassine: 'sassine-barbershop' });
+    // The project in shops/sassine/.env.
+    const project = readShop('sassine').env!.VITE_FIREBASE_PROJECT_ID;
+    expect(aliases).toEqual({ sassine: project });
     expect(deployRefusal('sassine', undefined, aliases)).toBeNull();
-    expect(deployRefusal('sassine', 'sassine-barbershop', aliases)).toBeNull();
+    expect(deployRefusal('sassine', project, aliases)).toBeNull();
     expect(deployRefusal('sassine', 'other-project', aliases)).toMatch(/but this deploy goes to/);
-    expect(deployRefusal('sassine', 'eddy-barbershop', aliases)).toMatch(/locked/);
+    expect(deployRefusal('sassine', LOCKED, aliases)).toMatch(/locked/);
     expect(deployRefusal('eddy', undefined, aliases)).toMatch(/locked|not a shop/);
-    expect(deployRefusal('eddy-barbershop', undefined, aliases)).toMatch(/locked/);
+    expect(deployRefusal(LOCKED, undefined, aliases)).toMatch(/locked/);
     expect(deployRefusal('default', undefined, aliases)).toMatch(/not a shop/);
   });
 });

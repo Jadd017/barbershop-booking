@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { LOCKED_PROJECTS } from './deployTargets.mjs';
 import { firebaseConfigFor, listShops, parseEnv, readShop, shopProblems } from './shops.mjs';
 
 const READY = {
@@ -51,8 +52,8 @@ describe('shopProblems', () => {
 
   it("needs the .firebaserc alias to be the .env's project", () => {
     expect(shopProblems('sassine', { ...ready, alias: undefined })[0]).toMatch(/no alias "sassine"/);
-    expect(shopProblems('sassine', { ...ready, alias: 'eddy-barbershop' })[0]).toMatch(
-      /says sassine is eddy-barbershop, but .* says sassine-maatouk/,
+    expect(shopProblems('sassine', { ...ready, alias: 'example-other-project' })[0]).toMatch(
+      /says sassine is example-other-project, but .* says sassine-maatouk/,
     );
   });
 
@@ -76,7 +77,8 @@ describe('firebaseConfigFor', () => {
     };
     const csp = config.hosting.headers[0].headers.find((h) => h.key === 'Content-Security-Policy')!.value;
     expect(csp).toContain("frame-src 'self' https://sassine-maatouk.web.app https://sassine-maatouk.firebaseapp.com ");
-    expect(JSON.stringify(config)).not.toMatch(/__[A-Z_]+__|eddy-barbershop/);
+    expect(JSON.stringify(config)).not.toMatch(/__[A-Z_]+__/);
+    for (const locked of LOCKED_PROJECTS) expect(JSON.stringify(config)).not.toContain(locked);
     expect(config.emulators).toBeUndefined();
     // The predeploy guard stays.
     expect(config.firestore.predeploy).toEqual(['node scripts/deploy-guard.mjs']);
